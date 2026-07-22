@@ -1,0 +1,19 @@
+{
+  "name": "aplikasi-kasir-gas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aplikasi kasir PWA dengan frontend statis dan backend Google Apps Script.",
+  "scripts": {
+    "dev": "node tools/dev-server.js",
+    "build": "node tools/validate.js"
+  },
+  "keywords": [
+    "kasir",
+    "crm",
+    "invoice",
+    "google-apps-script",
+    "pwa"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}

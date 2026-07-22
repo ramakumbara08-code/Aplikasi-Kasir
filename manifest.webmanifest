@@ -1,0 +1,45 @@
+{
+  "name": "Kasir SaaS",
+  "short_name": "Kasir",
+  "description": "Aplikasi kasir SaaS, CRM pelanggan, laporan dasar, dan invoice PDF.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f5f7fb",
+  "theme_color": "#126fd6",
+  "icons": [
+    {
+      "src": "public/icon.svg?v=20260722-17",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Input Penjualan",
+      "short_name": "Kasir",
+      "url": "./index.html#pos",
+      "icons": [
+        {
+          "src": "public/icon.svg?v=20260722-17",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Data Pelanggan",
+      "short_name": "CRM",
+      "url": "./index.html#customers",
+      "icons": [
+        {
+          "src": "public/icon.svg?v=20260722-17",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}
