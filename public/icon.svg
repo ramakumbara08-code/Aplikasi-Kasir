@@ -1,19 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Kasir SaaS">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Icon aplikasi kasir">
   <defs>
-    <linearGradient id="appBlue" x1="88" y1="56" x2="424" y2="456" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#2e31c8"/>
-      <stop offset="0.58" stop-color="#126fd6"/>
-      <stop offset="1" stop-color="#0bb6d1"/>
+    <linearGradient id="bg" x1="80" y1="64" x2="438" y2="456" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f766e"/>
+      <stop offset="0.56" stop-color="#0ea5a4"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="156" y1="130" x2="356" y2="230" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ecfeff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="104" fill="url(#appBlue)"/>
-  <rect x="126" y="96" width="260" height="320" rx="44" fill="#ffffff"/>
-  <rect x="160" y="132" width="192" height="78" rx="14" fill="#e4f4ff"/>
-  <rect x="182" y="157" width="148" height="20" rx="10" fill="#126fd6"/>
-  <rect x="160" y="244" width="52" height="52" rx="12" fill="#126fd6"/>
-  <rect x="230" y="244" width="52" height="52" rx="12" fill="#0bb6d1"/>
-  <rect x="300" y="244" width="52" height="52" rx="12" fill="#2e31c8"/>
-  <rect x="160" y="316" width="52" height="52" rx="12" fill="#0bb6d1"/>
-  <rect x="230" y="316" width="122" height="52" rx="12" fill="#126fd6"/>
-  <path d="M385 108c0-16 13-29 29-29h14v14c0 16-13 29-29 29h-14v-14Z" fill="#ffffff" opacity="0.92"/>
+  <rect width="512" height="512" rx="104" fill="url(#bg)"/>
+  <path d="M150 95h212c22 0 40 18 40 40v44h-52v-28H162v88h-52V135c0-22 18-40 40-40Z" fill="#ffffff" opacity="0.96"/>
+  <path d="M171 74h170c12 0 22 10 22 22v101H149V96c0-12 10-22 22-22Z" fill="#f8fafc"/>
+  <path d="M176 106h160v78H176z" fill="url(#screen)"/>
+  <path d="M206 133h100" stroke="#0f766e" stroke-width="18" stroke-linecap="round"/>
+  <path d="M132 222h248c31 0 56 25 56 56v103c0 31-25 56-56 56H132c-31 0-56-25-56-56V278c0-31 25-56 56-56Z" fill="#ffffff"/>
+  <path d="M112 262h288v74H112z" fill="#0f172a"/>
+  <text x="256" y="312" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="800" fill="#ffffff">Rp</text>
+  <rect x="118" y="362" width="58" height="42" rx="12" fill="#0f766e"/>
+  <rect x="198" y="362" width="58" height="42" rx="12" fill="#0ea5a4"/>
+  <rect x="278" y="362" width="116" height="42" rx="12" fill="#f59e0b"/>
+  <path d="M118 222h276l-28-48H146l-28 48Z" fill="#e2e8f0"/>
+  <path d="M367 78h44c14 0 25 11 25 25v119h-69V78Z" fill="#fff7ed"/>
+  <path d="M386 111h31M386 145h31M386 179h31" stroke="#f59e0b" stroke-width="12" stroke-linecap="round"/>
 </svg>

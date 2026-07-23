@@ -1414,3 +1414,46 @@ th {
     padding: 10px;
   }
 }
+
+button.is-loading:not(.login-submit) {
+  box-shadow: 0 8px 18px rgba(37, 105, 216, 0.16);
+}
+
+button:not(.login-submit) .button-spinner {
+  border-width: 2px;
+  height: 16px;
+  width: 16px;
+}
+
+.hpp-panel {
+  margin-top: 14px;
+}
+
+.hpp-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.hpp-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(150px, 1.35fr) minmax(120px, .85fr) minmax(90px, .7fr) minmax(120px, .8fr) minmax(86px, .55fr) minmax(120px, .8fr) auto;
+}
+
+.hpp-row .icon-only {
+  align-self: end;
+  min-height: 40px;
+}
+
+@media (max-width: 980px) {
+  .hpp-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .hpp-row {
+    grid-template-columns: 1fr;
+  }
+}

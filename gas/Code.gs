@@ -17,7 +17,7 @@ const APP = {
   tokenTtlHours: TOKEN_DAYS * 24,
   invoiceFolderName: "Invoices",
   logoFolderName: "Logos",
-  dataCenterApiUrl: "https://script.google.com/macros/s/AKfycbw6uKq28_yQiODnpCcLAKEHIf_8ziJCfk7nEPey4Il6IcSlwkc8GKUrCRePoAVDX5xM1Q/exec",
+  dataCenterApiUrl: "https://script.google.com/macros/s/AKfycbxso_3C7_ZuSCbGQbzhMisVys7goyOK5qgjxLFB7wiCFvtlYTX96EX9zSlEcDcXitd8hg/exec",
   licenseCacheSeconds: 1800,
   schemaCacheSeconds: 21600,
   driveFolderCacheSeconds: 21600,
@@ -30,9 +30,9 @@ const SHEET_HEADERS = {
   tokens: ["id", "token", "userId", "email", "username", "name", "role", "tenantId", "companyId", "companySlug", "companyName", "companyApiUrl", "expiresAt", "createdAt"],
   customers: ["id", "tenantId", "isWalkin", "name", "phone", "address", "notes", "createdAt", "updatedAt"],
   categories: ["id", "tenantId", "name", "flow", "behavior", "parentId", "updatedAt"],
-  products: ["id", "tenantId", "sku", "name", "categoryId", "subcategoryId", "price", "cost", "stock", "active", "updatedAt"],
+  products: ["id", "tenantId", "sku", "name", "categoryId", "subcategoryId", "price", "cost", "hppOutputQty", "hppTotalCost", "hppItems", "stock", "active", "updatedAt"],
   transactions: ["id", "tenantId", "date", "customerId", "customerSnapshot", "cashierName", "paymentMethod", "paymentStatus", "returnStatus", "returnedAt", "returnNote", "notes", "items", "subtotal", "discount", "total", "pdfUrl", "createdAt", "updatedAt"],
-  expenses: ["id", "tenantId", "date", "name", "flow", "behavior", "categoryId", "subcategoryId", "amount", "notes", "createdAt", "updatedAt"],
+  expenses: ["id", "tenantId", "date", "name", "flow", "behavior", "categoryId", "subcategoryId", "unitPrice", "qty", "amount", "notes", "createdAt", "updatedAt"],
   activityLogs: ["id", "at", "actorId", "actorName", "actorUsername", "actorRole", "tenantId", "action", "target", "detail", "metadata"],
   settings: ["settingKey", "settingValue", "updatedAt"]
 };
@@ -91,6 +91,9 @@ const HEADER_LABELS = {
   subcategoryId: "ID Subkategori",
   price: "Harga Jual",
   cost: "HPP/Modal",
+  hppOutputQty: "Jumlah Jadi HPP",
+  hppTotalCost: "Total Biaya HPP",
+  hppItems: "Rincian HPP",
   stock: "Stok",
   date: "Tanggal",
   customerId: "ID Pelanggan",
@@ -106,6 +109,8 @@ const HEADER_LABELS = {
   discount: "Diskon",
   total: "Total",
   pdfUrl: "URL PDF",
+  unitPrice: "Harga Satuan",
+  qty: "Qty",
   amount: "Nominal",
   at: "Waktu",
   actorId: "ID Pelaku",
@@ -134,6 +139,15 @@ const HEADER_ALIASES = {
   subkategori: "subcategoryId",
   hargaModal: "cost",
   hpp: "cost",
+  jumlahJadiHpp: "hppOutputQty",
+  totalBiayaHpp: "hppTotalCost",
+  rincianHpp: "hppItems",
+  strukturHpp: "hppItems",
+  hargaSatuan: "unitPrice",
+  hargaPerUnit: "unitPrice",
+  quantity: "qty",
+  kuantitas: "qty",
+  jumlah: "qty",
   kontakWa: "phone",
   pelanggan: "customerId",
   kasir: "cashierName",
@@ -303,8 +317,8 @@ function doPost(e) {
     if (action === "createCompanyFolders") return json_({ message: createCompanyFolders() });
 
     if (action === "saveTenant") {
-      requireRole_(user, ["platform"]);
-      return json_(saveTenant_(body.tenant));
+      requireRole_(user, ["platform", "owner"]);
+      return json_(saveTenant_(body.tenant, user));
     }
 
     if (action === "saveActivityLog") {
@@ -433,31 +447,52 @@ function bootstrap_(user) {
 function saveUser_(user) {
   if (!user || !user.username) throw new Error("Username wajib diisi");
   const username = normalizeUsername_(user.username);
+  const previousUsername = normalizeUsername_(user.previousUsername || user.originalUsername || "");
+  const previousEmail = lower_(user.previousEmail || user.originalEmail || "");
   const existingById = user.id ? getById_("users", user.id) : null;
-  const existingByUsername = findBy_("users", "username", username);
-  if (existingByUsername && existingByUsername.id !== user.id) throw new Error("Username sudah dipakai");
-  if (!existingById && !user.password) throw new Error("Password wajib untuk akun baru");
+  const existingByPrevious = existingById ? null : (
+    previousUsername ? findUserByLogin_(previousUsername) :
+    previousEmail ? findUserByLogin_(previousEmail) :
+    null
+  );
+  const target = existingById || existingByPrevious;
+  const existingByUsername = findUserByLogin_(username);
+  if (existingByUsername) {
+    const sameById = target && target.id && existingByUsername.id && String(target.id) === String(existingByUsername.id);
+    const sameByRow = target && target._rowNumber && existingByUsername._rowNumber && target._rowNumber === existingByUsername._rowNumber;
+    if (!sameById && !sameByRow) throw new Error("Username sudah dipakai");
+  }
+  if (!target && !user.password) throw new Error("Password wajib untuk akun baru");
 
   const now = new Date().toISOString();
   const row = {
-    id: user.id || Utilities.getUuid(),
+    id: user.id || (target && target.id) || autoId_("usr"),
     name: user.name || username,
     username,
     email: user.email || `${username}@kasir.local`,
     role: user.role === "platform" ? "platform" : user.role === "owner" ? "owner" : "cashier",
-    tenantId: user.role === "platform" ? "" : (user.tenantId || DEFAULT_TENANT_ID),
-    password: user.password ? String(user.password) : (existingById.password || existingById.passwordHash || ""),
+    tenantId: user.role === "platform" ? "" : (user.tenantId || (target && target.tenantId) || DEFAULT_TENANT_ID),
+    password: user.password ? String(user.password) : ((target && (target.password || target.passwordHash)) || ""),
     active: user.active !== false,
-    createdAt: user.createdAt || (existingById && existingById.createdAt) || now,
-    createdBy: user.createdBy || (existingById && existingById.createdBy) || "",
+    createdAt: user.createdAt || (target && target.createdAt) || now,
+    createdBy: user.createdBy || (target && target.createdBy) || "",
     updatedAt: now
   };
-  put_("users", row.id, row);
+  if (target && target._rowNumber && !findRowNumber_(sheet_("users"), row.id)) {
+    patchRow_("users", target._rowNumber, row);
+  } else {
+    put_("users", row.id, row);
+  }
   return { user: publicUser_(row) };
 }
 
-function saveTenant_(tenant) {
+function saveTenant_(tenant, actor) {
   if (!tenant || !tenant.storeName) throw new Error("Nama toko wajib diisi");
+  if (actor && actor.role === "owner") {
+    const actorTenantId = actor.tenantId || DEFAULT_TENANT_ID;
+    if (tenant.id && tenant.id !== actorTenantId) throw new Error("Owner hanya bisa mengubah perusahaannya sendiri");
+    tenant.id = actorTenantId;
+  }
   const now = new Date().toISOString();
   const row = {
     id: tenant.id || Utilities.getUuid(),
@@ -569,6 +604,9 @@ function saveProduct_(product) {
     subcategoryId: product.subcategoryId || "",
     price: Number(product.price) || 0,
     cost: Number(product.cost) || 0,
+    hppOutputQty: Number(product.hppOutputQty) || 0,
+    hppTotalCost: Number(product.hppTotalCost) || 0,
+    hppItems: Array.isArray(product.hppItems) ? product.hppItems : [],
     stock: Number(product.stock) || 0,
     active: product.active !== false,
     updatedAt: new Date().toISOString()
@@ -587,7 +625,9 @@ function saveExpense_(expense) {
     behavior: expense.behavior || "variable",
     categoryId: expense.categoryId || "",
     subcategoryId: expense.subcategoryId || "",
-    amount: Number(expense.amount) || 0,
+    unitPrice: Number(expense.unitPrice) || Number(expense.amount) || 0,
+    qty: Math.max(1, Number(expense.qty) || 1),
+    amount: Number(expense.amount) || ((Number(expense.unitPrice) || 0) * Math.max(1, Number(expense.qty) || 1)),
     notes: expense.notes || "",
     createdAt: expense.createdAt || new Date().toISOString()
   };

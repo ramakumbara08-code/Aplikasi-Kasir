@@ -149,10 +149,10 @@
         transaction("INV-1005", 1, "cust-andi", [line("prd-ricebox", 1)], "TikTok Shop", "Budi", "returned", "returned", "Retur demo.")
       ],
       expenses: [
-        { id: "exp-001", tenantId, date: iso(10), name: "Sewa kios bulanan", flow: "expense", behavior: "fixed", categoryId: "cat-fixed-expense", subcategoryId: "sub-rent", amount: 2500000, notes: "Bulan berjalan", createdAt: iso(10), updatedAt: iso(10) },
-        { id: "exp-002", tenantId, date: iso(5), name: "Belanja bahan baku", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-cogs", amount: 740000, notes: "Kopi, susu, gula aren", createdAt: iso(5), updatedAt: iso(5) },
-        { id: "exp-003", tenantId, date: iso(2), name: "Kemasan takeaway", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-packaging", amount: 260000, notes: "", createdAt: iso(2), updatedAt: iso(2) },
-        { id: "exp-004", tenantId, date: iso(1), name: "Iklan promo marketplace", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-marketing", amount: 150000, notes: "Boost Shopee dan TikTok Shop", createdAt: iso(1), updatedAt: iso(1) }
+        { id: "exp-001", tenantId, date: iso(10), name: "Sewa kios bulanan", flow: "expense", behavior: "fixed", categoryId: "cat-fixed-expense", subcategoryId: "sub-rent", unitPrice: 2500000, qty: 1, amount: 2500000, notes: "Bulan berjalan", createdAt: iso(10), updatedAt: iso(10) },
+        { id: "exp-002", tenantId, date: iso(5), name: "Belanja bahan baku", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-cogs", unitPrice: 740000, qty: 1, amount: 740000, notes: "Kopi, susu, gula aren", createdAt: iso(5), updatedAt: iso(5) },
+        { id: "exp-003", tenantId, date: iso(2), name: "Kemasan takeaway", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-packaging", unitPrice: 2600, qty: 100, amount: 260000, notes: "", createdAt: iso(2), updatedAt: iso(2) },
+        { id: "exp-004", tenantId, date: iso(1), name: "Iklan promo marketplace", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-marketing", unitPrice: 150000, qty: 1, amount: 150000, notes: "Boost Shopee dan TikTok Shop", createdAt: iso(1), updatedAt: iso(1) }
       ],
       activityLogs: [
         { id: "log-demo-1", at: iso(1), actorId: "usr-owner", actorName: "Owner", actorUsername: "owner", actorRole: "owner", tenantId, action: "login", target: "owner", detail: "Login demo dari demo.js", metadata: {} },

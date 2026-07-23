@@ -244,9 +244,9 @@
       customers,
       transactions,
       expenses: [
-        { id: "exp-001", tenantId, date: daysAgo(10).toISOString(), name: "Sewa kios bulanan", flow: "expense", behavior: "fixed", categoryId: "cat-fixed-expense", subcategoryId: "sub-rent", amount: 2500000, notes: "Juli" },
-        { id: "exp-002", tenantId, date: daysAgo(5).toISOString(), name: "Belanja bahan baku", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-cogs", amount: 740000, notes: "Kopi, susu, gula aren" },
-        { id: "exp-003", tenantId, date: daysAgo(2).toISOString(), name: "Kemasan takeaway", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-packaging", amount: 260000, notes: "" }
+        { id: "exp-001", tenantId, date: daysAgo(10).toISOString(), name: "Sewa kios bulanan", flow: "expense", behavior: "fixed", categoryId: "cat-fixed-expense", subcategoryId: "sub-rent", unitPrice: 2500000, qty: 1, amount: 2500000, notes: "Juli" },
+        { id: "exp-002", tenantId, date: daysAgo(5).toISOString(), name: "Belanja bahan baku", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-cogs", unitPrice: 740000, qty: 1, amount: 740000, notes: "Kopi, susu, gula aren" },
+        { id: "exp-003", tenantId, date: daysAgo(2).toISOString(), name: "Kemasan takeaway", flow: "expense", behavior: "variable", categoryId: "cat-variable-expense", subcategoryId: "sub-packaging", unitPrice: 2600, qty: 100, amount: 260000, notes: "" }
       ],
       activityLogs: [],
       session: null
@@ -295,18 +295,48 @@
       .replace(/[^a-z0-9._-]/g, "");
   }
 
+  function stableUserId(user, username, role) {
+    if (user?.id) return String(user.id);
+    if (role === "platform") return "usr-platform";
+    const tenantId = user?.tenantId || "tenant-demo";
+    const basis = normalizeUsername(username || (user?.email || "").split("@")[0] || user?.name || "akun");
+    return `usr-${tenantId}-${basis || "akun"}`.replace(/[^a-z0-9._-]/g, "-");
+  }
+
   function normalizeUser(user) {
     const username = normalizeUsername(user.username || (user.email || "").split("@")[0] || user.name);
     const role = ["platform", "owner", "cashier"].includes(user.role) ? user.role : "cashier";
+    const tenantId = role === "platform" ? "" : (user.tenantId || "tenant-demo");
+    const idValue = stableUserId({ ...user, tenantId }, username, role);
     return {
       ...user,
+      id: idValue,
       username,
-      email: user.email || `${username || user.id}@kasir.local`,
+      email: user.email || `${username || idValue}@kasir.local`,
       role,
-      tenantId: role === "platform" ? "" : (user.tenantId || "tenant-demo"),
+      tenantId,
       active: user.active !== false,
       createdAt: user.createdAt || nowIso()
     };
+  }
+
+  function findEditableUser(data) {
+    const tenantId = currentTenantId();
+    const wantedId = String(data.id || "");
+    const previousUsername = normalizeUsername(data.previousUsername || "");
+    const previousEmail = String(data.previousEmail || "").trim().toLowerCase();
+    const wantedUsername = normalizeUsername(data.username || "");
+    const wantedEmail = String(data.email || "").trim().toLowerCase();
+    return state.users.find((item) => {
+      const normalized = normalizeUser(item);
+      if (normalized.role === "platform" || normalized.tenantId !== tenantId) return false;
+      if (wantedId && normalized.id === wantedId) return true;
+      if (previousUsername && normalized.username === previousUsername) return true;
+      if (previousEmail && String(normalized.email || "").toLowerCase() === previousEmail) return true;
+      if (!wantedId && wantedUsername && normalized.username === wantedUsername) return true;
+      if (!wantedId && wantedEmail && String(normalized.email || "").toLowerCase() === wantedEmail) return true;
+      return false;
+    });
   }
 
   function userLoginMatches(user, login) {
@@ -559,7 +589,7 @@
         settings: { ...base.settings, ...(saved.settings || {}) },
         users: Array.isArray(saved.users) ? saved.users.map(normalizeUser) : base.users,
         categories: Array.isArray(saved.categories) ? saved.categories : base.categories,
-        products: Array.isArray(saved.products) ? saved.products : base.products,
+        products: Array.isArray(saved.products) ? saved.products.map(normalizeProduct) : base.products.map(normalizeProduct),
         customers: Array.isArray(saved.customers) ? saved.customers : base.customers,
         transactions: Array.isArray(saved.transactions) ? saved.transactions : base.transactions,
         expenses: Array.isArray(saved.expenses) ? saved.expenses : base.expenses,
@@ -588,6 +618,7 @@
         tenantId: record.tenantId || tenantId
       })) : [];
     });
+    state.products = state.products.map(normalizeProduct);
     state.customers = state.customers.map((customer) => ({
       ...customer,
       isWalkin: Boolean(customer.isWalkin || customer.id === "cust-walkin" || String(customer.id || "").endsWith("-cust-walkin"))
@@ -625,6 +656,8 @@
     selectedExpenseId: tenantExpenses()[0]?.id || "",
     selectedCategoryId: tenantCategories()[0]?.id || "",
     selectedProductId: tenantProducts()[0]?.id || "",
+    hppCategoryId: "all",
+    hppProductId: tenantProducts()[0]?.id || "",
     selectedUserId: tenantUsers().find((user) => user.role === "cashier")?.id || "",
     platformTenantId: state.tenants[0]?.id || "",
     editingTenantId: "",
@@ -663,6 +696,110 @@
 
   function money(value) {
     return rupiah.format(Number(value) || 0);
+  }
+
+  function parseCurrency(value) {
+    if (typeof value === "number") return value;
+    const text = String(value || "").replace(/[^\d-]/g, "");
+    if (!text || text === "-") return 0;
+    return Number(text) || 0;
+  }
+
+  function formatCurrencyInput(value) {
+    const number = parseCurrency(value);
+    return number ? number.toLocaleString("id-ID") : "";
+  }
+
+  function numericValue(value, fallback = 0) {
+    const normalized = String(value ?? "").replace(",", ".");
+    const number = Number(normalized);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function expenseQty(expense) {
+    return Math.max(1, numericValue(expense?.qty, 1));
+  }
+
+  function expenseUnitPrice(expense) {
+    const storedUnitPrice = Number(expense?.unitPrice) || 0;
+    if (storedUnitPrice) return storedUnitPrice;
+    return Math.round((Number(expense?.amount) || 0) / expenseQty(expense));
+  }
+
+  function expenseAmount(unitPrice, qty) {
+    return Math.round((Number(unitPrice) || 0) * Math.max(1, Number(qty) || 1));
+  }
+
+  function normalizeHppItems(items) {
+    let source = items;
+    if (typeof source === "string" && source.trim()) {
+      try {
+        source = JSON.parse(source);
+      } catch (error) {
+        source = [];
+      }
+    }
+    if (!Array.isArray(source)) return [];
+    return source
+      .map((item) => {
+        const unitCost = parseCurrency(item?.unitCost ?? item?.price ?? item?.cost ?? "");
+        const qty = Math.max(0, numericValue(item?.qty, 0));
+        const total = unitCost * qty;
+        return {
+          name: String(item?.name || "").trim(),
+          type: String(item?.type || "Bahan baku").trim(),
+          unit: String(item?.unit || "").trim(),
+          unitCost,
+          qty,
+          total,
+          notes: String(item?.notes || "").trim()
+        };
+      })
+      .filter((item) => item.name || item.unitCost || item.qty);
+  }
+
+  function hppItemTotal(item) {
+    return Math.round((Number(item?.unitCost) || 0) * Math.max(0, Number(item?.qty) || 0));
+  }
+
+  function productHppItems(product) {
+    return normalizeHppItems(product?.hppItems);
+  }
+
+  function productHppSummary(product) {
+    const items = productHppItems(product);
+    const totalCost = items.length ? sum(items, hppItemTotal) : (Number(product?.hppTotalCost) || 0);
+    const outputQty = Math.max(0, numericValue(product?.hppOutputQty, 0));
+    const structuredCost = totalCost > 0 && outputQty > 0 ? Math.round(totalCost / outputQty) : 0;
+    return {
+      items,
+      totalCost,
+      outputQty,
+      cost: structuredCost || Number(product?.cost) || 0
+    };
+  }
+
+  function normalizeProduct(product) {
+    const items = normalizeHppItems(product?.hppItems);
+    const totalCost = Number(product?.hppTotalCost) || (items.length ? sum(items, hppItemTotal) : 0);
+    return {
+      ...product,
+      price: Number(product?.price) || 0,
+      cost: Number(product?.cost) || 0,
+      stock: Number(product?.stock) || 0,
+      active: product?.active !== false,
+      hppItems: items,
+      hppOutputQty: Math.max(0, numericValue(product?.hppOutputQty, 0)),
+      hppTotalCost: totalCost
+    };
+  }
+
+  function productHppFromForm(data) {
+    return parseCurrency(data.cost);
+  }
+
+  function productProfit(product) {
+    return (Number(product?.price) || 0) - (Number(product?.cost) || 0);
   }
 
   function esc(value) {
@@ -835,26 +972,36 @@
 
   function applyCompanyConfig(company, slug = appSlug()) {
     const apiUrl = company.companyApiUrl || company.gasUrl || company.companyGasUrl || "";
+    const previousTenant = currentTenant();
+    const keepLocalProfile = Boolean(state.settings?.profileEditedAt && !isDemoSlug());
+    const profileValue = (key, remoteValue, fallback = "") => {
+      const localValue = previousTenant?.[key] || state.settings?.[key] || "";
+      if (keepLocalProfile && localValue) return localValue;
+      return remoteValue || localValue || fallback;
+    };
     const tenant = normalizeTenant({
-      ...currentTenant(),
-      id: company.tenantId || defaultTenantId(),
-      companyId: company.companyId || company.id || "",
+      ...previousTenant,
+      id: company.tenantId || previousTenant.id || defaultTenantId(),
+      companyId: company.companyId || company.id || previousTenant.companyId || "",
       companySlug: company.companySlug || company.slug || slug,
       companyApiUrl: apiUrl,
       code: company.companySlug || company.slug || slug,
       slug: company.companySlug || company.slug || slug,
-      storeName: company.storeName || company.companyName || "Toko",
-      companyName: company.companyName || company.storeName || "Toko",
-      storePhone: company.storePhone || "",
-      storeAddress: company.storeAddress || company.address || "",
-      companyEmail: company.companyEmail || "",
-      logoUrl: company.logoUrl || "",
-      spreadsheetId: company.companySpreadsheetId || company.spreadsheetId || "",
-      spreadsheetUrl: company.companySpreadsheetUrl || company.spreadsheetUrl || "",
-      webUrl: company.frontendUrl || company.webUrl || "",
+      storeName: profileValue("storeName", company.storeName || company.companyName, "Toko"),
+      companyName: profileValue("companyName", company.companyName || company.storeName, "Toko"),
+      storePhone: profileValue("storePhone", company.storePhone, ""),
+      storeAddress: profileValue("storeAddress", company.storeAddress || company.address, ""),
+      companyEmail: profileValue("companyEmail", company.companyEmail, ""),
+      invoicePrefix: profileValue("invoicePrefix", company.invoicePrefix, "INV"),
+      logoUrl: normalizeCompanyLogoUrl(profileValue("logoUrl", company.logoUrl, "")),
+      logoSize: previousTenant.logoSize || state.settings.logoSize || 54,
+      logoOffsetX: previousTenant.logoOffsetX || state.settings.logoOffsetX || 0,
+      spreadsheetId: company.companySpreadsheetId || company.spreadsheetId || previousTenant.spreadsheetId || "",
+      spreadsheetUrl: company.companySpreadsheetUrl || company.spreadsheetUrl || previousTenant.spreadsheetUrl || "",
+      webUrl: company.frontendUrl || company.webUrl || previousTenant.webUrl || "",
       gasUrl: apiUrl,
-      status: company.status || "aktif",
-      active: !["nonaktif", "inactive", "suspended", "expired"].includes(String(company.status || "").toLowerCase())
+      status: company.status || previousTenant.status || "aktif",
+      active: !["nonaktif", "inactive", "suspended", "expired"].includes(String(company.status || previousTenant.status || "").toLowerCase())
     });
     state.tenants = [tenant];
     state.platformSettings = {
@@ -873,7 +1020,10 @@
       storePhone: tenant.storePhone,
       storeAddress: tenant.storeAddress,
       companyEmail: tenant.companyEmail,
-      logoUrl: tenant.logoUrl
+      invoicePrefix: tenant.invoicePrefix,
+      logoUrl: tenant.logoUrl,
+      logoSize: tenant.logoSize,
+      logoOffsetX: tenant.logoOffsetX
     };
     centerStatusMessage = tenant.gasUrl ? "Koneksi server aktif" : "URL GAS perusahaan belum ada di Data Center";
     return tenant;
@@ -1098,9 +1248,32 @@
 
   function categoryLabel(categoryId) {
     const category = categoryById(categoryId);
-    if (!category) return "-";
-    const parent = category.parentId ? categoryById(category.parentId) : null;
-    return parent ? `${parent.name} / ${category.name}` : category.name;
+    return category ? category.name : "-";
+  }
+
+  function firstTopCategoryId(flow) {
+    return tenantCategories().find((category) => category.flow === flow && !category.parentId)?.id || "";
+  }
+
+  function topCategoryId(categoryId, flow = "") {
+    const category = categoryById(categoryId);
+    if (!category) return firstTopCategoryId(flow);
+    const parent = category.parentId ? categoryById(category.parentId) : category;
+    if (flow && parent?.flow !== flow) return firstTopCategoryId(flow);
+    return parent?.id || firstTopCategoryId(flow);
+  }
+
+  function childCategories(parentId, flow = "") {
+    return tenantCategories()
+      .filter((category) => category.parentId === parentId)
+      .filter((category) => !flow || category.flow === flow);
+  }
+
+  function normalizedSubcategoryId(parentId, subcategoryId, flow) {
+    const subcategory = categoryById(subcategoryId);
+    if (!subcategory || subcategory.parentId !== parentId) return "";
+    if (flow && subcategory.flow !== flow) return "";
+    return subcategory.id;
   }
 
   function inDateRange(value, from, to) {
@@ -1985,7 +2158,10 @@
   }
 
   function renderExpenseEditForm(expense) {
-    const categoryId = expense.categoryId || categoryById(expense.subcategoryId)?.parentId || "cat-variable-expense";
+    const categoryId = topCategoryId(expense.categoryId || categoryById(expense.subcategoryId)?.parentId, "expense") || firstTopCategoryId("expense");
+    const subcategoryId = normalizedSubcategoryId(categoryId, expense.subcategoryId, "expense");
+    const qty = expenseQty(expense);
+    const unitPrice = expenseUnitPrice(expense);
     return `
       <form id="expense-edit-form" class="form-grid">
         <input type="hidden" name="id" value="${esc(expense.id)}">
@@ -1997,16 +2173,18 @@
           </select>
         </label>
         <label>Nama pengeluaran <input name="name" value="${esc(expense.name)}" required></label>
-        <label>Nominal <input name="amount" type="number" min="0" step="100" value="${Number(expense.amount) || 0}" required></label>
+        <label>Harga satuan <input name="unitPrice" inputmode="numeric" data-currency data-expense-unit value="${formatCurrencyInput(unitPrice)}" required></label>
+        <label>Qty <input name="qty" type="number" min="1" step="1" data-expense-qty value="${qty}" required></label>
+        <label>Total <input name="amount" inputmode="numeric" data-currency data-expense-total value="${formatCurrencyInput(expense.amount)}" readonly required></label>
         <label>Kategori
-          <select name="categoryId" required>
+          <select name="categoryId" data-subcategory-source="expense" required>
             ${categoryOptions("expense", categoryId)}
           </select>
         </label>
         <label>Subkategori
-          <select name="subcategoryId">
+          <select name="subcategoryId" data-subcategory-target>
             <option value="">Tanpa subkategori</option>
-            ${tenantCategories().filter((category) => category.flow === "expense" && category.parentId).map((category) => `<option value="${esc(category.id)}" ${selectedAttr(category.id, expense.subcategoryId)}>${esc(categoryLabel(category.id))}</option>`).join("")}
+            ${subcategoryOptions("expense", categoryId, subcategoryId)}
           </select>
         </label>
         <label class="full">Catatan <textarea name="notes">${esc(expense.notes || "")}</textarea></label>
@@ -2046,14 +2224,15 @@
   }
 
   function renderProductEditForm(product) {
-    const categoryId = product.categoryId || categoryById(product.subcategoryId)?.parentId || "cat-sales";
+    const categoryId = topCategoryId(product.categoryId || categoryById(product.subcategoryId)?.parentId, "income") || firstTopCategoryId("income");
+    const subcategoryId = normalizedSubcategoryId(categoryId, product.subcategoryId, "income");
     return `
       <form id="product-edit-form" class="form-grid">
         <input type="hidden" name="id" value="${esc(product.id)}">
         <label>Nama item <input name="name" value="${esc(product.name)}" required></label>
         <label>SKU <input name="sku" value="${esc(product.sku || "")}" placeholder="Kode item"></label>
-        <label>Harga jual <input name="price" type="number" min="0" step="100" value="${Number(product.price) || 0}" required></label>
-        <label>Harga modal <input name="cost" type="number" min="0" step="100" value="${Number(product.cost) || 0}"></label>
+        <label>Harga jual <input name="price" inputmode="numeric" data-currency data-price value="${formatCurrencyInput(product.price)}" required></label>
+        <label>HPP per item <input name="cost" inputmode="numeric" data-currency data-hpp-cost value="${formatCurrencyInput(product.cost)}" placeholder="Manual / dari panel HPP"></label>
         <label>Stok <input name="stock" type="number" min="0" step="1" value="${Number(product.stock) || 0}"></label>
         <label>Status
           <select name="active">
@@ -2062,16 +2241,17 @@
           </select>
         </label>
         <label>Kategori
-          <select name="categoryId" required>
+          <select name="categoryId" data-subcategory-source="income" required>
             ${categoryOptions("income", categoryId)}
           </select>
         </label>
         <label>Subkategori
-          <select name="subcategoryId">
+          <select name="subcategoryId" data-subcategory-target>
             <option value="">Tanpa subkategori</option>
-            ${tenantCategories().filter((category) => category.flow === "income" && category.parentId).map((category) => `<option value="${esc(category.id)}" ${selectedAttr(category.id, product.subcategoryId)}>${esc(categoryLabel(category.id))}</option>`).join("")}
+            ${subcategoryOptions("income", categoryId, subcategoryId)}
           </select>
         </label>
+        <span class="muted small full" data-hpp-preview>HPP saat ini ${money(product.cost)}. Gunakan panel Kalkulator HPP untuk menyusun biaya bahan, kemasan, tenaga kerja, dan overhead.</span>
         <button type="submit" class="btn-primary">Simpan Perubahan</button>
         <button type="button" class="btn-soft" data-cancel-edit="product">Batal</button>
       </form>
@@ -2082,6 +2262,8 @@
     return `
       <form id="user-edit-form" class="form-grid">
         <input type="hidden" name="id" value="${esc(user.id)}">
+        <input type="hidden" name="previousUsername" value="${esc(user.username || "")}">
+        <input type="hidden" name="previousEmail" value="${esc(user.email || "")}">
         <label>Nama <input name="name" value="${esc(user.name)}" required></label>
         <label>Username <input name="username" value="${esc(user.username || "")}" required autocomplete="off"></label>
         <label>Email <input name="email" value="${esc(user.email || "")}" inputmode="email"></label>
@@ -2098,7 +2280,7 @@
             <option value="false" ${selectedAttr(user.active === false ? "false" : "true", "false")}>Nonaktif</option>
           </select>
         </label>
-        <button type="submit" class="btn-primary">Simpan Perubahan</button>
+        <button type="button" class="btn-primary" data-save-user-edit>Simpan Perubahan</button>
         <button type="button" class="btn-soft" data-cancel-edit="user">Batal</button>
       </form>
     `;
@@ -2187,6 +2369,7 @@
     if (selectedExpense && selectedExpense.id !== ui.selectedExpenseId) ui.selectedExpenseId = selectedExpense.id;
     const fixed = sum(expenses.filter((expense) => expense.behavior === "fixed"), "amount");
     const variable = sum(expenses.filter((expense) => expense.behavior === "variable"), "amount");
+    const expenseCategoryId = firstTopCategoryId("expense") || "cat-variable-expense";
     return `
       <div class="grid">
         <section class="grid three">
@@ -2205,17 +2388,19 @@
                   <option value="variable">Tidak tetap</option>
                 </select>
               </label>
-              <label>Nama pengeluaran <input name="name" required placeholder="Contoh: belanja bahan"></label>
-              <label>Nominal <input name="amount" type="number" min="0" step="100" required></label>
+              <label>Nama pengeluaran <input name="name" required placeholder="Contoh: kemasan"></label>
+              <label>Harga satuan <input name="unitPrice" inputmode="numeric" data-currency data-expense-unit required placeholder="Contoh: 2.000"></label>
+              <label>Qty <input name="qty" type="number" min="1" step="1" data-expense-qty value="1" required></label>
+              <label>Total <input name="amount" inputmode="numeric" data-currency data-expense-total readonly required></label>
               <label>Kategori
-                <select name="categoryId" required>
-                  ${categoryOptions("expense", "cat-variable-expense")}
+                <select name="categoryId" data-subcategory-source="expense" required>
+                  ${categoryOptions("expense", expenseCategoryId)}
                 </select>
               </label>
               <label>Subkategori
-                <select name="subcategoryId">
+                <select name="subcategoryId" data-subcategory-target>
                   <option value="">Tanpa subkategori</option>
-                  ${tenantCategories().filter((category) => category.flow === "expense" && category.parentId).map((category) => `<option value="${esc(category.id)}">${esc(categoryLabel(category.id))}</option>`).join("")}
+                  ${subcategoryOptions("expense", expenseCategoryId, "")}
                 </select>
               </label>
               <label class="full">Catatan <textarea name="notes"></textarea></label>
@@ -2226,7 +2411,7 @@
             <div class="panel-header"><h3>Daftar pengeluaran</h3><span class="tag">${expenses.length}</span></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Tanggal</th><th>Nama</th><th>Kategori</th><th>Jenis</th><th>Nominal</th><th></th></tr></thead>
+                <thead><tr><th>Tanggal</th><th>Nama</th><th>Kategori</th><th>Jenis</th><th>Qty</th><th>Total</th><th></th></tr></thead>
                 <tbody>
                   ${expenses.map((expense) => `
                     <tr>
@@ -2234,6 +2419,7 @@
                       <td>${esc(expense.name)}<br><span class="muted small">${esc(expense.notes || "")}</span></td>
                       <td>${esc(categoryLabel(expense.subcategoryId || expense.categoryId))}</td>
                       <td><span class="tag expense">${expense.behavior === "fixed" ? "Tetap" : "Tidak tetap"}</span></td>
+                      <td>${expenseQty(expense)} x ${money(expenseUnitPrice(expense))}</td>
                       <td>${money(expense.amount)}</td>
                       <td><button type="button" class="${expense.id === ui.selectedExpenseId ? "btn-primary" : "btn-soft"}" data-select-expense="${esc(expense.id)}">Pilih</button></td>
                     </tr>
@@ -2252,7 +2438,7 @@
             <div class="grid three">
               <article class="metric expense"><span>Nama</span><strong style="font-size:1rem;">${esc(selectedExpense.name)}</strong><small>${formatDate(selectedExpense.date)}</small></article>
               <article class="metric avg"><span>Kategori</span><strong style="font-size:1rem;">${esc(categoryLabel(selectedExpense.subcategoryId || selectedExpense.categoryId))}</strong><small>${selectedExpense.behavior === "fixed" ? "Biaya tetap" : "Biaya tidak tetap"}</small></article>
-              <article class="metric net"><span>Nominal</span><strong>${money(selectedExpense.amount)}</strong><small>${esc(selectedExpense.notes || "-")}</small></article>
+              <article class="metric net"><span>Total</span><strong>${money(selectedExpense.amount)}</strong><small>${expenseQty(selectedExpense)} x ${money(expenseUnitPrice(selectedExpense))}${selectedExpense.notes ? ` - ${esc(selectedExpense.notes)}` : ""}</small></article>
             </div>
           ` : `<div class="empty-state">Pilih pengeluaran untuk melihat detail.</div>`}
         </section>
@@ -2260,6 +2446,100 @@
     `;
   }
 
+  function hppTypeOptions(selectedType = "Bahan baku") {
+    return ["Bahan baku", "Kemasan", "Tenaga kerja", "Overhead", "Lain-lain"]
+      .map((type) => `<option value="${esc(type)}" ${selectedAttr(selectedType, type)}>${esc(type)}</option>`)
+      .join("");
+  }
+
+  function renderHppLine(item = {}, index = 0) {
+    return `
+      <div class="hpp-row" data-hpp-row>
+        <label>Komponen biaya
+          <input name="hppName" value="${esc(item.name || "")}" placeholder="Contoh: Cup, bahan baku, label">
+        </label>
+        <label>Jenis
+          <select name="hppType">${hppTypeOptions(item.type || "Bahan baku")}</select>
+        </label>
+        <label>Satuan
+          <input name="hppUnit" value="${esc(item.unit || "")}" placeholder="pcs / kg / jam">
+        </label>
+        <label>Harga satuan
+          <input name="hppUnitCost" inputmode="numeric" data-currency data-hpp-line-unit value="${formatCurrencyInput(item.unitCost)}" placeholder="2.000">
+        </label>
+        <label>Qty
+          <input name="hppQty" inputmode="decimal" data-hpp-line-qty value="${item.qty ? esc(item.qty) : ""}" placeholder="1">
+        </label>
+        <label>Total
+          <input name="hppLineTotal" inputmode="numeric" data-currency data-hpp-line-total value="${formatCurrencyInput(hppItemTotal(item))}" readonly>
+        </label>
+        <button type="button" class="btn-danger icon-only" data-remove-hpp-dom-row="${index}" title="Hapus baris">X</button>
+      </div>
+    `;
+  }
+
+  function renderHppCalculatorPanel() {
+    const selectedCategoryId = ui.hppCategoryId || "all";
+    const candidateProducts = tenantProducts()
+      .filter((product) => selectedCategoryId === "all" || itemMatchesCategory(product, selectedCategoryId));
+    const selectedProduct = candidateProducts.find((product) => product.id === ui.hppProductId) ||
+      candidateProducts[0] ||
+      tenantProducts()[0];
+    if (selectedProduct && selectedProduct.id !== ui.hppProductId) ui.hppProductId = selectedProduct.id;
+    const products = candidateProducts.length ? candidateProducts : tenantProducts();
+    const topIncomeCategories = tenantCategories().filter((category) => category.flow === "income" && !category.parentId);
+    if (!selectedProduct) {
+      return `
+        <section class="panel hpp-panel">
+          <div class="panel-header"><h3>Kalkulator HPP Produk</h3></div>
+          <div class="empty-state">Tambahkan item penjualan dulu untuk menyusun struktur HPP.</div>
+        </section>
+      `;
+    }
+    const summary = productHppSummary(selectedProduct);
+    const rows = summary.items.length ? summary.items : [{}];
+    return `
+      <section class="panel hpp-panel">
+        <div class="panel-header">
+          <h3>Kalkulator HPP Produk</h3>
+          <span class="tag">${esc(selectedProduct.sku || selectedProduct.name)}</span>
+        </div>
+        <form id="hpp-form" class="form-grid">
+          <input type="hidden" name="productId" value="${esc(selectedProduct.id)}">
+          <label>Kategori produk
+            <select data-filter="hppCategoryId">
+              <option value="all" ${selectedAttr(selectedCategoryId, "all")}>Semua kategori</option>
+              ${topIncomeCategories.map((category) => `<option value="${esc(category.id)}" ${selectedAttr(selectedCategoryId, category.id)}>${esc(category.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>SKU / produk
+            <select data-filter="hppProductId">
+              ${products.map((product) => `<option value="${esc(product.id)}" ${selectedAttr(selectedProduct.id, product.id)}>${esc(product.sku || "-")} - ${esc(product.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Jumlah produk jadi
+            <input name="hppOutputQty" inputmode="decimal" data-hpp-output-qty value="${summary.outputQty ? esc(summary.outputQty) : "1"}" placeholder="Contoh: 100">
+          </label>
+          <label>HPP per item
+            <input name="hppCostPreview" data-hpp-cost-preview value="${formatCurrencyInput(summary.cost)}" readonly>
+          </label>
+          <div class="grid three full">
+            <article class="metric expense"><span>Total biaya</span><strong data-hpp-grand-total>${money(summary.totalCost)}</strong><small>${summary.items.length || 0} komponen biaya</small></article>
+            <article class="metric avg"><span>Jumlah jadi</span><strong data-hpp-output-label>${summary.outputQty || 1}</strong><small>Output produksi</small></article>
+            <article class="metric net"><span>HPP/unit</span><strong data-hpp-unit-label>${money(summary.cost)}</strong><small>Harga pokok produksi</small></article>
+          </div>
+          <div class="hpp-lines full" data-hpp-lines>
+            ${rows.map(renderHppLine).join("")}
+          </div>
+          <div class="actions full">
+            <button type="button" class="btn-soft" data-add-hpp-dom-row>Tambah Baris Biaya</button>
+            <button type="submit" class="btn-soft">Simpan Struktur</button>
+            <button type="submit" class="btn-primary" data-apply-hpp="true">Simpan & Terapkan HPP</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
   function renderCategories() {
     const topCategories = tenantCategories().filter((category) => !category.parentId);
     const selectedCategory = categoryById(ui.selectedCategoryId) || topCategories[0] || tenantCategories()[0];
@@ -2273,6 +2553,7 @@
       : [];
     const selectedProduct = productById(ui.selectedProductId) || tenantProducts()[0];
     if (selectedProduct && selectedProduct.id !== ui.selectedProductId) ui.selectedProductId = selectedProduct.id;
+    const productCategoryId = firstTopCategoryId("income") || "cat-sales";
     return `
       <div class="grid two">
         <section class="panel">
@@ -2336,25 +2617,26 @@
           <form id="product-form" class="form-grid">
             <label>Nama item <input name="name" required></label>
             <label>SKU <input name="sku" placeholder="Kode item"></label>
-            <label>Harga jual <input name="price" type="number" min="0" step="100" required></label>
-            <label>Harga modal <input name="cost" type="number" min="0" step="100"></label>
+            <label>Harga jual <input name="price" inputmode="numeric" data-currency data-price required placeholder="Contoh: 18.000"></label>
+            <label>HPP per item <input name="cost" inputmode="numeric" data-currency data-hpp-cost placeholder="Manual / dari panel HPP"></label>
             <label>Stok <input name="stock" type="number" min="0" step="1"></label>
             <label>Kategori
-              <select name="categoryId" required>
-                ${categoryOptions("income", "cat-sales")}
+              <select name="categoryId" data-subcategory-source="income" required>
+                ${categoryOptions("income", productCategoryId)}
               </select>
             </label>
-            <label class="full">Subkategori
-              <select name="subcategoryId">
+            <label>Subkategori
+              <select name="subcategoryId" data-subcategory-target>
                 <option value="">Tanpa subkategori</option>
-                ${tenantCategories().filter((category) => category.flow === "income" && category.parentId).map((category) => `<option value="${esc(category.id)}">${esc(categoryLabel(category.id))}</option>`).join("")}
+                ${subcategoryOptions("income", productCategoryId, "")}
               </select>
             </label>
+            <span class="muted small full" data-hpp-preview>Isi manual atau gunakan panel Kalkulator HPP di bawah untuk struktur biaya yang lebih rinci.</span>
             <button type="submit" class="btn-primary">Tambah Item</button>
           </form>
           <div class="table-wrap" style="margin-top: 16px;">
             <table>
-              <thead><tr><th>Item</th><th>Kategori</th><th>Harga</th><th>Modal</th><th>Stok</th><th>Status</th><th>Detail</th></tr></thead>
+              <thead><tr><th>Item</th><th>Kategori</th><th>Harga</th><th>HPP</th><th>Laba/unit</th><th>Stok</th><th>Status</th><th>Detail</th></tr></thead>
               <tbody>
                 ${tenantProducts().map((product) => `
                   <tr>
@@ -2362,6 +2644,7 @@
                     <td>${esc(categoryLabel(product.subcategoryId || product.categoryId))}</td>
                     <td>${money(product.price)}</td>
                     <td>${money(product.cost)}</td>
+                    <td>${money(productProfit(product))}</td>
                     <td>${Number(product.stock) || 0}</td>
                     <td><span class="tag ${product.active === false ? "expense" : "income"}">${product.active === false ? "Nonaktif" : "Aktif"}</span></td>
                     <td><button type="button" class="${product.id === ui.selectedProductId ? "btn-primary" : "btn-soft"}" data-select-product="${esc(product.id)}">Pilih</button></td>
@@ -2378,13 +2661,14 @@
             ${selectedProduct && ui.editingProductId === selectedProduct.id ? renderProductEditForm(selectedProduct) : selectedProduct ? `
               <div class="grid three">
                 <article class="metric sales"><span>Item</span><strong style="font-size:1rem;">${esc(selectedProduct.name)}</strong><small>${esc(selectedProduct.sku || "-")}</small></article>
-                <article class="metric avg"><span>Harga dan modal</span><strong style="font-size:1rem;">${money(selectedProduct.price)} / ${money(selectedProduct.cost)}</strong><small>HPP memakai harga modal</small></article>
+                <article class="metric avg"><span>Harga dan HPP</span><strong style="font-size:1rem;">${money(selectedProduct.price)} / ${money(selectedProduct.cost)}</strong><small>Laba per item ${money(productProfit(selectedProduct))}</small></article>
                 <article class="metric net"><span>Stok</span><strong>${Number(selectedProduct.stock) || 0}</strong><small>${selectedProduct.active === false ? "Nonaktif" : esc(categoryLabel(selectedProduct.subcategoryId || selectedProduct.categoryId))}</small></article>
               </div>
             ` : `<div class="empty-state">Pilih item untuk melihat detail.</div>`}
           </div>
         </section>
       </div>
+      ${renderHppCalculatorPanel()}
     `;
   }
 
@@ -2458,12 +2742,12 @@
           <div class="detail-box">
             <div class="panel-header">
               <h3>Detail akun</h3>
-              ${selectedUser && selectedUser.role !== "owner" && selectedUser.id !== state.session.id && ui.editingUserId !== selectedUser.id
+              ${selectedUser && ui.editingUserId !== selectedUser.id
                 ? `<div class="actions">
                     <button type="button" class="btn-soft" data-edit-user="${esc(selectedUser.id)}">Edit</button>
                     <button type="button" class="btn-primary" data-reset-user-password="${esc(selectedUser.id)}">Reset Password</button>
-                    <button type="button" class="${selectedUser.active === false ? "btn-primary" : "btn-danger"}" data-toggle-user="${esc(selectedUser.id)}">${selectedUser.active === false ? "Aktifkan" : "Nonaktifkan"}</button>
-                    <button type="button" class="btn-danger" data-delete-user="${esc(selectedUser.id)}">Hapus</button>
+                    ${selectedUser.role === "owner" || selectedUser.id === state.session.id ? "" : `<button type="button" class="${selectedUser.active === false ? "btn-primary" : "btn-danger"}" data-toggle-user="${esc(selectedUser.id)}">${selectedUser.active === false ? "Aktifkan" : "Nonaktifkan"}</button>`}
+                    ${selectedUser.role === "owner" || selectedUser.id === state.session.id ? "" : `<button type="button" class="btn-danger" data-delete-user="${esc(selectedUser.id)}">Hapus</button>`}
                   </div>`
                 : selectedUser && ui.editingUserId === selectedUser.id ? `<button type="button" class="btn-soft" data-cancel-edit="user">Batal Edit</button>`
                 : ""}
@@ -2472,7 +2756,7 @@
               <div class="grid three">
                 <article class="metric sales"><span>Nama</span><strong style="font-size:1rem;">${esc(selectedUser.name)}</strong><small>${esc(selectedUser.email || "-")}</small></article>
                 <article class="metric avg"><span>Username</span><strong style="font-size:1rem;">${esc(selectedUser.username || "-")}</strong><small>${selectedUser.role === "owner" ? "Owner" : "Kasir"}</small></article>
-                <article class="metric ${selectedUser.active === false ? "expense" : "net"}"><span>Status</span><strong style="font-size:1rem;">${selectedUser.active === false ? "Nonaktif" : "Aktif"}</strong><small>${selectedUser.role === "owner" || selectedUser.id === state.session.id ? "Akun ini tidak bisa dihapus dari sini" : "Edit/reset/hapus dari panel ini"}</small></article>
+                <article class="metric ${selectedUser.active === false ? "expense" : "net"}"><span>Status</span><strong style="font-size:1rem;">${selectedUser.active === false ? "Nonaktif" : "Aktif"}</strong><small>${selectedUser.role === "owner" || selectedUser.id === state.session.id ? "Edit username/password, hapus dan nonaktif tidak tersedia" : "Edit/reset/hapus dari panel ini"}</small></article>
               </div>
             ` : `<div class="empty-state">Pilih akun untuk melihat detail.</div>`}
           </div>
@@ -2661,11 +2945,108 @@
     `;
   }
 
-  function categoryOptions(flow, selectedId) {
+  function categoryOptions(flow, selectedId, includeChildren = false) {
+    const selected = includeChildren ? selectedId : topCategoryId(selectedId, flow);
     return tenantCategories()
       .filter((category) => category.flow === flow)
-      .map((category) => `<option value="${esc(category.id)}" ${category.id === selectedId ? "selected" : ""}>${esc(categoryLabel(category.id))}</option>`)
+      .filter((category) => includeChildren || !category.parentId)
+      .map((category) => `<option value="${esc(category.id)}" ${category.id === selected ? "selected" : ""}>${esc(category.name)}</option>`)
       .join("");
+  }
+
+  function subcategoryOptions(flow, parentId, selectedId) {
+    return childCategories(parentId, flow)
+      .map((category) => `<option value="${esc(category.id)}" ${selectedAttr(category.id, selectedId)}>${esc(category.name)}</option>`)
+      .join("");
+  }
+
+  function syncSubcategorySelect(form, flow) {
+    if (!form) return;
+    const categorySelect = form.elements.categoryId;
+    const subcategorySelect = form.elements.subcategoryId;
+    if (!categorySelect || !subcategorySelect) return;
+    const parentId = topCategoryId(categorySelect.value, flow);
+    const current = subcategorySelect.value;
+    subcategorySelect.innerHTML = `<option value="">Tanpa subkategori</option>${subcategoryOptions(flow, parentId, current)}`;
+    subcategorySelect.value = normalizedSubcategoryId(parentId, current, flow);
+  }
+
+  function formatCurrencyField(input) {
+    const value = parseCurrency(input.value);
+    input.value = formatCurrencyInput(value);
+  }
+
+  function syncExpenseAmount(form) {
+    const unitInput = form.elements.unitPrice;
+    const qtyInput = form.elements.qty;
+    const amountInput = form.elements.amount;
+    if (!unitInput || !qtyInput || !amountInput) return;
+    const total = expenseAmount(parseCurrency(unitInput.value), numericValue(qtyInput.value, 1));
+    amountInput.value = formatCurrencyInput(total);
+  }
+
+  function syncProductHppPreview(form) {
+    const priceInput = form.elements.price;
+    const costInput = form.elements.cost;
+    const preview = form.querySelector("[data-hpp-preview]");
+    if (!costInput) return;
+    const price = parseCurrency(priceInput?.value || "");
+    const cost = parseCurrency(costInput.value || "");
+    if (preview) {
+      preview.textContent = cost
+        ? `HPP ${money(cost)} per item. Estimasi laba ${money(price - cost)} per item.`
+        : "Isi manual atau gunakan panel Kalkulator HPP di bawah untuk struktur biaya.";
+    }
+  }
+
+  function syncHppCalculatorTotals(form) {
+    if (!form || form.id !== "hpp-form") return;
+    let totalCost = 0;
+    form.querySelectorAll("[data-hpp-row]").forEach((row) => {
+      const unitInput = row.querySelector("[name='hppUnitCost']");
+      const qtyInput = row.querySelector("[name='hppQty']");
+      const totalInput = row.querySelector("[name='hppLineTotal']");
+      const lineTotal = hppItemTotal({
+        unitCost: parseCurrency(unitInput?.value || ""),
+        qty: numericValue(qtyInput?.value || "", 0)
+      });
+      totalCost += lineTotal;
+      if (totalInput) totalInput.value = formatCurrencyInput(lineTotal);
+    });
+    const outputQty = Math.max(0, numericValue(form.elements.hppOutputQty?.value || "", 0));
+    const unitCost = totalCost > 0 && outputQty > 0 ? Math.round(totalCost / outputQty) : 0;
+    const costPreview = form.elements.hppCostPreview;
+    const grandTotal = form.querySelector("[data-hpp-grand-total]");
+    const outputLabel = form.querySelector("[data-hpp-output-label]");
+    const unitLabel = form.querySelector("[data-hpp-unit-label]");
+    if (costPreview) costPreview.value = formatCurrencyInput(unitCost);
+    if (grandTotal) grandTotal.textContent = money(totalCost);
+    if (outputLabel) outputLabel.textContent = outputQty || 0;
+    if (unitLabel) unitLabel.textContent = money(unitCost);
+  }
+
+  function readHppItemsFromForm(form) {
+    const names = Array.from(form.querySelectorAll("[name='hppName']")).map((input) => input.value);
+    const types = Array.from(form.querySelectorAll("[name='hppType']")).map((input) => input.value);
+    const units = Array.from(form.querySelectorAll("[name='hppUnit']")).map((input) => input.value);
+    const unitCosts = Array.from(form.querySelectorAll("[name='hppUnitCost']")).map((input) => input.value);
+    const qtys = Array.from(form.querySelectorAll("[name='hppQty']")).map((input) => input.value);
+    return normalizeHppItems(names.map((name, index) => ({
+      name,
+      type: types[index] || "Bahan baku",
+      unit: units[index] || "",
+      unitCost: parseCurrency(unitCosts[index] || ""),
+      qty: numericValue(qtys[index] || "", 0)
+    })));
+  }
+
+  function addHppDomRow(form) {
+    const container = form?.querySelector("[data-hpp-lines]");
+    if (!container) return;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = renderHppLine({}, container.querySelectorAll("[data-hpp-row]").length).trim();
+    container.appendChild(wrapper.firstElementChild);
+    syncHppCalculatorTotals(form);
   }
 
   function itemMatchesCategory(item, categoryId) {
@@ -3077,7 +3458,9 @@
 
   async function handleExpense(form) {
     const data = Object.fromEntries(new FormData(form).entries());
-    const category = categoryById(data.subcategoryId || data.categoryId);
+    const categoryId = topCategoryId(data.categoryId, "expense");
+    const subcategoryId = normalizedSubcategoryId(categoryId, data.subcategoryId, "expense");
+    const category = categoryById(subcategoryId || categoryId);
     const expense = {
       id: id("exp"),
       tenantId: currentTenantId(),
@@ -3085,9 +3468,11 @@
       name: data.name.trim(),
       flow: "expense",
       behavior: data.behavior || category?.behavior || "variable",
-      categoryId: data.categoryId,
-      subcategoryId: data.subcategoryId,
-      amount: Number(data.amount) || 0,
+      categoryId,
+      subcategoryId,
+      unitPrice: parseCurrency(data.unitPrice || data.amount),
+      qty: Math.max(1, numericValue(data.qty, 1)),
+      amount: expenseAmount(parseCurrency(data.unitPrice || data.amount), numericValue(data.qty, 1)),
       notes: data.notes.trim()
     };
     state.expenses.unshift(expense);
@@ -3102,15 +3487,19 @@
     const data = Object.fromEntries(new FormData(form).entries());
     const expense = tenantExpenses().find((item) => item.id === data.id);
     if (!expense) return;
-    const category = categoryById(data.subcategoryId || data.categoryId);
+    const categoryId = topCategoryId(data.categoryId, "expense");
+    const subcategoryId = normalizedSubcategoryId(categoryId, data.subcategoryId, "expense");
+    const category = categoryById(subcategoryId || categoryId);
     Object.assign(expense, {
       date: new Date(data.date).toISOString(),
       name: data.name.trim(),
       flow: "expense",
       behavior: data.behavior || category?.behavior || "variable",
-      categoryId: data.categoryId,
-      subcategoryId: data.subcategoryId,
-      amount: Number(data.amount) || 0,
+      categoryId,
+      subcategoryId,
+      unitPrice: parseCurrency(data.unitPrice || data.amount),
+      qty: Math.max(1, numericValue(data.qty, 1)),
+      amount: expenseAmount(parseCurrency(data.unitPrice || data.amount), numericValue(data.qty, 1)),
       notes: data.notes.trim(),
       updatedAt: nowIso()
     });
@@ -3177,15 +3566,16 @@
 
   async function handleProduct(form) {
     const data = Object.fromEntries(new FormData(form).entries());
+    const categoryId = topCategoryId(data.categoryId, "income");
     const product = {
       id: id("prd"),
       tenantId: currentTenantId(),
       sku: data.sku.trim(),
       name: data.name.trim(),
-      categoryId: data.categoryId,
-      subcategoryId: data.subcategoryId,
-      price: Number(data.price) || 0,
-      cost: Number(data.cost) || 0,
+      categoryId,
+      subcategoryId: normalizedSubcategoryId(categoryId, data.subcategoryId, "income"),
+      price: parseCurrency(data.price),
+      cost: productHppFromForm(data),
       stock: Number(data.stock) || 0,
       active: true
     };
@@ -3197,17 +3587,46 @@
     await logActivity("create_product", `Item ${product.name} ditambahkan dengan harga ${money(product.price)}`, product.sku || product.id);
   }
 
+  async function handleHppCalculator(form, applyCost = false) {
+    const product = productById(form.elements.productId?.value);
+    if (!product) {
+      toast("Produk belum dipilih.");
+      return;
+    }
+    const items = readHppItemsFromForm(form);
+    const outputQty = Math.max(1, numericValue(form.elements.hppOutputQty?.value || "", 1));
+    const totalCost = sum(items, hppItemTotal);
+    const unitCost = totalCost > 0 && outputQty > 0 ? Math.round(totalCost / outputQty) : 0;
+    if (!items.length) {
+      toast("Isi minimal satu komponen biaya HPP.");
+      return;
+    }
+    Object.assign(product, {
+      hppItems: items,
+      hppOutputQty: outputQty,
+      hppTotalCost: totalCost,
+      cost: applyCost && unitCost ? unitCost : product.cost,
+      updatedAt: nowIso()
+    });
+    saveState();
+    render();
+    await pushToGas("saveProduct", { product });
+    await logActivity("update_hpp", `Struktur HPP ${product.name} diperbarui`, product.sku || product.id, { totalCost, outputQty, unitCost, applied: applyCost });
+    toast(applyCost ? "Struktur HPP disimpan dan diterapkan ke produk." : "Struktur HPP disimpan.");
+  }
+
   async function handleProductEdit(form) {
     const data = Object.fromEntries(new FormData(form).entries());
     const product = productById(data.id);
     if (!product) return;
+    const categoryId = topCategoryId(data.categoryId, "income");
     Object.assign(product, {
       sku: data.sku.trim(),
       name: data.name.trim(),
-      categoryId: data.categoryId,
-      subcategoryId: data.subcategoryId,
-      price: Number(data.price) || 0,
-      cost: Number(data.cost) || 0,
+      categoryId,
+      subcategoryId: normalizedSubcategoryId(categoryId, data.subcategoryId, "income"),
+      price: parseCurrency(data.price),
+      cost: productHppFromForm(data),
       stock: Number(data.stock) || 0,
       active: data.active !== "false",
       updatedAt: nowIso()
@@ -3267,17 +3686,28 @@
 
   async function handleUserEdit(form) {
     const data = Object.fromEntries(new FormData(form).entries());
-    const user = state.users.find((item) => item.id === data.id);
-    if (!user || user.id === state.session.id) return;
+    let user = findEditableUser(data);
+    if (!user) {
+      toast("Akun belum ditemukan. Refresh halaman lalu pilih akun lagi.");
+      return;
+    }
+    const currentNormalized = normalizeUser(user);
+    if (!user.id) user.id = currentNormalized.id;
+    if (!user.tenantId) user.tenantId = currentNormalized.tenantId;
     const username = normalizeUsername(data.username);
     if (!username) {
       toast("Username hanya boleh huruf, angka, titik, strip, atau underscore.");
       return;
     }
     const email = data.email.trim() || `${username}@kasir.local`;
-    const duplicate = state.users.map(normalizeUser).some((item) => {
-      if (item.id === user.id) return false;
-      return item.username === username || String(item.email || "").toLowerCase() === email.toLowerCase();
+    const previousUsername = normalizeUsername(data.previousUsername || user.username);
+    const previousEmail = String(data.previousEmail || user.email || "").trim().toLowerCase();
+    const duplicate = state.users.some((item) => {
+      const normalizedItem = normalizeUser(item);
+      if (item === user || normalizedItem.id === user.id) return false;
+      if (previousUsername && normalizedItem.username === previousUsername) return false;
+      if (previousEmail && String(normalizedItem.email || "").toLowerCase() === previousEmail) return false;
+      return normalizedItem.username === username || String(normalizedItem.email || "").toLowerCase() === email.toLowerCase();
     });
     if (duplicate) {
       toast("Username atau email sudah dipakai.");
@@ -3287,21 +3717,38 @@
       toast("Password minimal 6 karakter.");
       return;
     }
+    if (!user.id) user.id = currentNormalized.id || id("usr");
+    const userPayloadMeta = {
+      previousUsername,
+      previousEmail
+    };
     Object.assign(user, normalizeUser({
       ...user,
       name: data.name.trim(),
       username,
       email,
-      role: data.role === "owner" ? "owner" : "cashier",
+      role: user.id === state.session.id ? user.role : data.role === "owner" ? "owner" : "cashier",
       active: data.active !== "false",
       password: data.password ? data.password : user.password,
       updatedAt: nowIso()
     }));
+    if (state.session?.id === user.id) {
+      Object.assign(state.session, {
+        name: user.name,
+        email: user.email,
+        username: user.username,
+        role: user.role,
+        tenantId: user.tenantId || state.session.tenantId
+      });
+    }
+    ui.selectedUserId = user.id;
+    saveState();
+    await pushToGas("saveUser", { user: { ...user, ...userPayloadMeta } });
+    await logActivity("update_user", `Akun ${user.name} diperbarui`, user.username || user.email);
     clearEditMode("user");
     saveState();
     render();
-    await pushToGas("saveUser", { user });
-    await logActivity("update_user", `Akun ${user.name} diperbarui`, user.username || user.email);
+    toast("Data karyawan berhasil diperbarui.");
   }
 
   async function handleTenant(form) {
@@ -3445,6 +3892,7 @@
       logoUrl: normalizeCompanyLogoUrl(data.logoUrl),
       logoSize: Number(data.logoSize) || 54,
       logoOffsetX: Number(data.logoOffsetX) || 0,
+      profileEditedAt: nowIso(),
       apiUrl: ""
     };
     Object.assign(tenant, {
@@ -3459,9 +3907,23 @@
       logoOffsetX: state.settings.logoOffsetX,
       updatedAt: nowIso()
     });
+    writeCachedCompanyConfig({
+      ...(state.platformSettings?.company || {}),
+      companyId: tenant.companyId || state.platformSettings?.company?.companyId || "",
+      companySlug: tenant.companySlug || tenant.slug || appSlug(),
+      companyName: tenant.companyName,
+      storeName: tenant.storeName,
+      storePhone: tenant.storePhone,
+      storeAddress: tenant.storeAddress,
+      address: tenant.storeAddress,
+      companyEmail: tenant.companyEmail,
+      logoUrl: tenant.logoUrl,
+      companyApiUrl: tenant.companyApiUrl || tenant.gasUrl || backendUrl()
+    }, tenant.companySlug || tenant.slug || appSlug());
     saveState();
     toast("Pengaturan disimpan.");
     render();
+    await pushToGas("saveTenant", { tenant });
     await logActivity("update_settings", "Profil toko diperbarui", state.settings.storeName);
   }
 
@@ -3619,7 +4081,7 @@
 
   async function editUser(userId) {
     const user = state.users.find((item) => item.id === userId && item.tenantId === currentTenantId());
-    if (!user || user.role === "owner" || user.id === state.session.id) return;
+    if (!user) return;
     const name = promptText("Nama kasir", user.name, true);
     if (name === null) return;
     const username = normalizeUsername(promptText("Username", user.username, true));
@@ -3638,7 +4100,7 @@
 
   async function resetUserPassword(userId) {
     const user = state.users.find((item) => item.id === userId && item.tenantId === currentTenantId());
-    if (!user || user.role === "owner" || user.id === state.session.id) return;
+    if (!user) return;
     const password = promptText(`Password baru untuk ${user.name}`, "", true);
     if (password === null) return;
     if (password.length < 6) {
@@ -3746,7 +4208,7 @@
     const tenantId = state.session?.tenantId || currentTenantId();
     if (Array.isArray(remote.tenants)) state.tenants = remote.tenants.map(normalizeTenant);
     if (Array.isArray(remote.categories)) state.categories = remote.categories.map((item) => ({ ...item, tenantId: item.tenantId || tenantId }));
-    if (Array.isArray(remote.products)) state.products = remote.products.map((item) => ({ ...item, tenantId: item.tenantId || tenantId }));
+    if (Array.isArray(remote.products)) state.products = remote.products.map((item) => normalizeProduct({ ...item, tenantId: item.tenantId || tenantId }));
     if (Array.isArray(remote.customers)) state.customers = remote.customers.map((item) => ({ ...item, tenantId: item.tenantId || tenantId }));
     if (Array.isArray(remote.users)) state.users = remote.users.map((item) => normalizeUser({ ...item, tenantId: item.tenantId || tenantId }));
     if (Array.isArray(remote.activityLogs)) state.activityLogs = remote.activityLogs.map((item) => ({ ...item, tenantId: item.tenantId || tenantId })).sort((a, b) => new Date(b.at) - new Date(a.at));
@@ -3853,26 +4315,64 @@
     }, 3200);
   }
 
+  function submitLoadingLabel(formId) {
+    if (formId === "checkout-form") return "Menyimpan...";
+    if (formId === "hpp-form") return "Menyimpan HPP...";
+    if (formId === "user-edit-form") return "Menyimpan akun...";
+    if (formId === "user-form") return "Membuat akun...";
+    return "Menyimpan...";
+  }
+
+  function setFormSubmitting(form, isSubmitting) {
+    if (!form) return;
+    form.dataset.submitting = isSubmitting ? "true" : "";
+    form.querySelectorAll("button[type='submit']").forEach((button) => {
+      if (isSubmitting) {
+        if (!button.dataset.originalHtml) button.dataset.originalHtml = button.innerHTML;
+        button.disabled = true;
+        button.classList.add("is-loading");
+        button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span> ${submitLoadingLabel(form.id)}`;
+      } else {
+        button.disabled = false;
+        button.classList.remove("is-loading");
+        if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+        delete button.dataset.originalHtml;
+      }
+    });
+  }
+
   app.addEventListener("submit", async (event) => {
     const form = event.target.closest("form");
     if (!form) return;
     event.preventDefault();
-    if (form.id === "login-form") await handleLogin(form);
-    if (form.id === "checkout-form") await handleCheckout(form);
-    if (form.id === "customer-form") await handleCustomer(form);
-    if (form.id === "customer-edit-form") await handleCustomerEdit(form);
-    if (form.id === "expense-form") await handleExpense(form);
-    if (form.id === "expense-edit-form") await handleExpenseEdit(form);
-    if (form.id === "category-form") await handleCategory(form);
-    if (form.id === "category-edit-form") await handleCategoryEdit(form);
-    if (form.id === "product-form") await handleProduct(form);
-    if (form.id === "product-edit-form") await handleProductEdit(form);
-    if (form.id === "user-form") await handleUser(form);
-    if (form.id === "user-edit-form") await handleUserEdit(form);
-    if (form.id === "tenant-form") await handleTenant(form);
-    if (form.id === "tenant-edit-form") await handleTenantEdit(form);
-    if (form.id === "platform-settings-form") await handlePlatformSettings(form);
-    if (form.id === "settings-form") await handleSettings(form);
+    if (form.id === "login-form") {
+      await handleLogin(form);
+      return;
+    }
+    if (form.dataset.submitting === "true") return;
+    setFormSubmitting(form, true);
+    try {
+      if (form.id === "checkout-form") await handleCheckout(form);
+      else if (form.id === "customer-form") await handleCustomer(form);
+      else if (form.id === "customer-edit-form") await handleCustomerEdit(form);
+      else if (form.id === "expense-form") await handleExpense(form);
+      else if (form.id === "expense-edit-form") await handleExpenseEdit(form);
+      else if (form.id === "category-form") await handleCategory(form);
+      else if (form.id === "category-edit-form") await handleCategoryEdit(form);
+      else if (form.id === "product-form") await handleProduct(form);
+      else if (form.id === "product-edit-form") await handleProductEdit(form);
+      else if (form.id === "hpp-form") await handleHppCalculator(form, event.submitter?.dataset.applyHpp === "true");
+      else if (form.id === "user-form") await handleUser(form);
+      else if (form.id === "user-edit-form") await handleUserEdit(form);
+      else if (form.id === "tenant-form") await handleTenant(form);
+      else if (form.id === "tenant-edit-form") await handleTenantEdit(form);
+      else if (form.id === "platform-settings-form") await handlePlatformSettings(form);
+      else if (form.id === "settings-form") await handleSettings(form);
+    } catch (error) {
+      toast(error?.message || "Proses belum berhasil.");
+    } finally {
+      if (document.body.contains(form)) setFormSubmitting(form, false);
+    }
   });
 
   app.addEventListener("click", async (event) => {
@@ -3983,6 +4483,31 @@
       render();
     }
     if (target.dataset.deleteProduct) await deleteProduct(target.dataset.deleteProduct);
+    if (target.dataset.addHppDomRow !== undefined) {
+      addHppDomRow(target.closest("form"));
+      return;
+    }
+    if (target.dataset.removeHppDomRow !== undefined) {
+      const form = target.closest("form");
+      const row = target.closest("[data-hpp-row]");
+      if (row) row.remove();
+      if (form && !form.querySelector("[data-hpp-row]")) addHppDomRow(form);
+      syncHppCalculatorTotals(form);
+      return;
+    }
+    if (target.dataset.saveUserEdit !== undefined) {
+      const form = target.closest("form");
+      if (!form || form.dataset.submitting === "true") return;
+      setFormSubmitting(form, true);
+      try {
+        await handleUserEdit(form);
+      } catch (error) {
+        toast(error?.message || "Data karyawan belum berhasil disimpan.");
+      } finally {
+        if (document.body.contains(form)) setFormSubmitting(form, false);
+      }
+      return;
+    }
     if (target.dataset.returnTransaction) await markTransactionReturned(target.dataset.returnTransaction);
     if (target.dataset.settleTransaction) await settleTransaction(target.dataset.settleTransaction);
     if (target.dataset.editUser) {
@@ -4002,6 +4527,10 @@
 
   app.addEventListener("change", async (event) => {
     const target = event.target;
+    if (target.dataset.subcategorySource) {
+      syncSubcategorySelect(target.form, target.dataset.subcategorySource);
+      return;
+    }
     if (target.dataset.logoUpload !== undefined && target.files?.[0]) {
       try {
         const logoUrl = await fileToDataUrl(target.files[0]);
@@ -4028,6 +4557,27 @@
       if (target.name === "password") ui.loginPassword = target.value;
       return;
     }
+    if (target.dataset.currency !== undefined) {
+      formatCurrencyField(target);
+      if (target.form) {
+        if (target.dataset.expenseUnit !== undefined) syncExpenseAmount(target.form);
+        if (target.dataset.hppLineUnit !== undefined) syncHppCalculatorTotals(target.form);
+        if (target.dataset.hppCost !== undefined || target.dataset.price !== undefined) syncProductHppPreview(target.form);
+      }
+      return;
+    }
+    if (target.dataset.expenseQty !== undefined && target.form) {
+      syncExpenseAmount(target.form);
+      return;
+    }
+    if (target.dataset.hppLineQty !== undefined && target.form) {
+      syncHppCalculatorTotals(target.form);
+      return;
+    }
+    if (target.dataset.hppOutputQty !== undefined && target.form) {
+      syncHppCalculatorTotals(target.form);
+      return;
+    }
     if (!target.dataset.filter || target.tagName === "SELECT" || target.type === "date") return;
     ui[target.dataset.filter] = target.value;
     if (scheduleLightFilterRender(target.dataset.filter)) return;
@@ -4043,7 +4593,7 @@
   });
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    navigator.serviceWorker.register("service-worker.js?v=20260722-17").then((registration) => {
+    navigator.serviceWorker.register("service-worker.js?v=20260724-02").then((registration) => {
       registration.update();
     }).catch(() => {});
   }
@@ -4080,3 +4630,4 @@
 
   boot();
 })();
+
