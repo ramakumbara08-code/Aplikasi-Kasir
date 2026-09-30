@@ -1457,3 +1457,12 @@ button:not(.login-submit) .button-spinner {
     grid-template-columns: 1fr;
   }
 }
+.cart-quantity {
+  width: 76px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px;
+  text-align: center;
+  font-weight: 700;
+}
+.cart-quantity:invalid { border-color: #dc2626; }

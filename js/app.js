@@ -716,6 +716,30 @@
     return Number.isFinite(number) ? number : fallback;
   }
 
+  function parseCartQuantity(value) {
+    const text = String(value ?? "").trim();
+    if (!/^\d+(?:[.,]\d{1,3})?$/.test(text)) return null;
+    const quantity = Number(text.replace(",", "."));
+    return Number.isFinite(quantity) && quantity > 0 && quantity <= 1000000 ? quantity : null;
+  }
+
+  function formatQuantity(value) {
+    return Number(value).toLocaleString("id-ID", { maximumFractionDigits: 3, useGrouping: false });
+  }
+
+  function updateCartQuantityInput(input) {
+    const quantity = parseCartQuantity(input.value);
+    input.setCustomValidity(quantity === null ? "Isi jumlah lebih dari 0, maksimal 1000000 dan 3 angka desimal. Contoh: 4,5" : "");
+    if (quantity === null) return;
+    const line = ui.cart.find((item) => item.productId === input.dataset.cartQuantity);
+    if (!line) return;
+    line.qty = quantity;
+    const row = input.closest(".cart-line");
+    row.querySelector("[data-line-calculation]").textContent = money(line.price) + " x " + formatQuantity(quantity);
+    row.querySelector("[data-line-total]").textContent = money(line.price * quantity);
+    app.querySelector("[data-cart-total]").textContent = money(sum(ui.cart, (item) => item.qty * item.price));
+  }
+
   function expenseQty(expense) {
     return Math.max(1, numericValue(expense?.qty, 1));
   }
@@ -1890,11 +1914,12 @@
             <h3>Keranjang</h3>
             <span class="tag">${ui.cart.length} baris</span>
           </div>
+          <p class="muted small">Klik jumlah untuk mengisi berat, misalnya 4,5 untuk 4,5 kg.</p>
           <div class="cart">
             ${ui.cart.map(renderCartLine).join("") || `<div class="empty-state">Pilih produk untuk mulai transaksi.</div>`}
             <div class="total-box">
               <span>Total</span>
-              <strong>${money(cartTotal)}</strong>
+              <strong data-cart-total>${money(cartTotal)}</strong>
             </div>
           </div>
           <form id="checkout-form" class="grid" style="margin-top: 14px;">
@@ -1982,15 +2007,15 @@
       <div class="cart-line">
         <div>
           <strong>${esc(line.name)}</strong>
-          <div class="muted small">${money(line.price)} x ${line.qty}</div>
+          <div class="muted small" data-line-calculation>${money(line.price)} x ${formatQuantity(line.qty)}</div>
         </div>
         <div class="qty-controls" aria-label="Jumlah ${esc(line.name)}">
           <button type="button" class="btn-soft icon-only" data-cart-minus="${esc(line.productId)}">-</button>
-          <strong>${line.qty}</strong>
+          <input class="cart-quantity" type="text" inputmode="decimal" form="checkout-form" required data-cart-quantity="${esc(line.productId)}" value="${formatQuantity(line.qty)}" aria-label="Jumlah ${esc(line.name)}" title="Jumlah atau berat, contoh: 4,5 kg" autocomplete="off">
           <button type="button" class="btn-soft icon-only" data-cart-plus="${esc(line.productId)}">+</button>
         </div>
         <div class="actions">
-          <strong>${money(line.price * line.qty)}</strong>
+          <strong data-line-total>${money(line.price * line.qty)}</strong>
           <button type="button" class="btn-danger icon-only" data-cart-remove="${esc(line.productId)}">x</button>
         </div>
       </div>
@@ -2855,7 +2880,7 @@
                 <td><button type="button" class="btn-soft" data-open-invoice="${esc(transaction.id)}">${esc(transaction.id)}</button></td>
                 <td>${formatDate(transaction.date)}<br><span class="muted small">${esc(transaction.cashierName || "-")}</span></td>
                 <td>${esc(transaction.customerSnapshot?.name || "-")}<br><span class="muted small">${esc(transaction.customerSnapshot?.phone || "")}</span></td>
-                <td>${transaction.items.map((item) => `${esc(item.name)} x ${item.qty}`).join("<br>")}</td>
+                <td>${transaction.items.map((item) => `${esc(item.name)} x ${formatQuantity(item.qty)}`).join("<br>")}</td>
                 <td>${esc(transaction.paymentMethod || "-")}</td>
                 <td><span class="tag ${transactionStatus(transaction).className}">${transactionStatus(transaction).label}</span></td>
                 <td><strong>${money(effectiveTransactionTotal(transaction))}</strong>${transaction.returnStatus === "returned" ? `<br><span class="muted small">Asal ${money(transaction.total)}</span>` : ""}</td>
@@ -3288,7 +3313,7 @@
     if (!product) return;
     const existing = ui.cart.find((line) => line.productId === productId);
     if (existing) {
-      existing.qty += 1;
+      existing.qty = Math.round((existing.qty + 1) * 1000) / 1000;
     } else {
       ui.cart.push({
         productId: product.id,
@@ -3307,13 +3332,14 @@
   function changeCartQty(productId, delta) {
     const line = ui.cart.find((item) => item.productId === productId);
     if (!line) return;
-    line.qty += delta;
+    line.qty = Math.round((line.qty + delta) * 1000) / 1000;
     if (line.qty <= 0) ui.cart = ui.cart.filter((item) => item.productId !== productId);
     render();
   }
 
   async function handleCheckout(form) {
     if (!ui.cart.length) return;
+    if (!form.reportValidity()) return;
     const data = Object.fromEntries(new FormData(form).entries());
     let customerId = ui.posCustomerId;
     let customer = customerById(customerId);
@@ -3374,7 +3400,7 @@
     state.transactions.unshift(transaction);
     items.forEach((item) => {
       const product = productById(item.productId);
-      if (product) product.stock = Math.max(0, (Number(product.stock) || 0) - item.qty);
+      if (product) product.stock = Math.max(0, Math.round(((Number(product.stock) || 0) - item.qty) * 1000) / 1000);
     });
     ui.cart = [];
     ui.lastTransactionId = transaction.id;
@@ -4263,7 +4289,7 @@
     transaction.returnNote = note;
     transaction.items.forEach((item) => {
       const product = productById(item.productId);
-      if (product) product.stock = (Number(product.stock) || 0) + (Number(item.qty) || 0);
+      if (product) product.stock = Math.round(((Number(product.stock) || 0) + (Number(item.qty) || 0)) * 1000) / 1000;
     });
     saveState();
     toast("Transaksi ditandai return dan stok dikembalikan.");
@@ -4557,6 +4583,10 @@
       if (target.name === "password") ui.loginPassword = target.value;
       return;
     }
+    if (target.dataset.cartQuantity !== undefined) {
+      updateCartQuantityInput(target);
+      return;
+    }
     if (target.dataset.currency !== undefined) {
       formatCurrencyField(target);
       if (target.form) {
@@ -4593,7 +4623,7 @@
   });
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    navigator.serviceWorker.register("service-worker.js?v=20260724-02").then((registration) => {
+    navigator.serviceWorker.register("service-worker.js?v=20260930-02").then((registration) => {
       registration.update();
     }).catch(() => {});
   }
