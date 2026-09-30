@@ -1,0 +1,17 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const src=fs.readFileSync('js/app.js','utf8');
+const helpers=src.slice(src.indexOf('  function parseCartQuantity('),src.indexOf('  function expenseQty('));
+const values={};
+const row={querySelector:s=>values[s]??=( {textContent:''})};
+const c=vm.createContext({ui:{cart:[{productId:'laundry',qty:1,price:7500}]},money:n=>String(n),sum:(a,f)=>a.reduce((n,v)=>n+f(v),0),app:{querySelector:row.querySelector}});
+vm.runInContext(helpers,c);
+for(const [input,expected] of [['4,5',4.5],['4.5',4.5],['0,25',0.25],['1',1],['1,125',1.125]])assert.equal(c.parseCartQuantity(input),expected);
+for(const invalid of ['', '0', '-1', '4,', '1,2,3','1.234,5','NaN','Infinity','1e3','0,0001','1000001'])assert.equal(c.parseCartQuantity(invalid),null);
+let message='';const input={value:'4,5',dataset:{cartQuantity:'laundry'},setCustomValidity:s=>message=s,closest:()=>row};
+c.updateCartQuantityInput(input);
+assert.equal(c.ui.cart[0].qty,4.5);assert.equal(values['[data-cart-total]'].textContent,'33750');assert.equal(message,'');
+input.value='0';c.updateCartQuantityInput(input);assert.ok(message);assert.equal(c.ui.cart[0].qty,4.5);
+const gas=vm.createContext({});vm.runInContext(fs.readFileSync('gas/Code.gs','utf8'),gas);
+const normalized=gas.normalizeTransaction_({items:[{qty:4.5,price:7500}]});
+assert.equal(normalized.items[0].qty,4.5);assert.equal(normalized.items[0].total,33750);
+console.log('Decimal quantity tests passed: comma/dot, live total, invalid input, backend preservation.');
