@@ -1054,7 +1054,7 @@
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action: "resolveCompany", companySlug: slug })
-      }, 10000);
+      }, 30000);
       const data = await response.json();
       if (!response.ok) throw new Error("Data perusahaan tidak ditemukan");
       const company = unwrapApiResult(data, "Data perusahaan tidak ditemukan");
@@ -4167,11 +4167,16 @@
 
   function refreshRemoteDataAfterLogin() {
     if (!backendUrl() || !state.session?.token) return;
-    loadRemoteData()
-      .then(() => {
+    loadRemoteData("essential")
+      .then(async (remote) => {
         saveState();
         resetTenantSelections();
         render();
+        if (remote.bootstrapPhase === "essential" && state.session?.role === "owner") {
+          await loadRemoteData("history");
+          saveState();
+          render();
+        }
       })
       .catch(() => {
         toast("Login berhasil. Sinkron data terbaru belum selesai.");
@@ -4197,14 +4202,16 @@
         tenantId: state.session?.tenantId || currentTenantId(),
         ...payload
       })
-    }, action.indexOf("login") === 0 ? 20000 : 15000);
+    }, action.indexOf("login") === 0 || action === "bootstrap" ? 45000 : 15000);
     const data = await response.json();
     if (!response.ok) throw new Error("Backend request failed");
     return unwrapApiResult(data, "Backend request failed");
   }
 
-  async function loadRemoteData() {
-    const remote = await api("bootstrap");
+  async function loadRemoteData(phase) {
+    const sessionToken = state.session?.token;
+    const remote = await api("bootstrap", phase ? { phase } : {});
+    if (!sessionToken || state.session?.token !== sessionToken) return {};
     const tenantId = state.session?.tenantId || currentTenantId();
     if (Array.isArray(remote.tenants)) state.tenants = remote.tenants.map(normalizeTenant);
     if (Array.isArray(remote.categories)) state.categories = remote.categories.map((item) => ({ ...item, tenantId: item.tenantId || tenantId }));
@@ -4220,6 +4227,7 @@
     if (!tenantCustomers().some((customer) => customer.id === ui.selectedCustomerId)) {
       ui.selectedCustomerId = tenantCustomers()[0]?.id || "";
     }
+    return remote;
   }
 
   async function pushToGas(action, payload, silent = false) {
@@ -4593,7 +4601,7 @@
   });
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    navigator.serviceWorker.register("service-worker.js?v=20260724-02").then((registration) => {
+    navigator.serviceWorker.register("service-worker.js?v=20260930-01").then((registration) => {
       registration.update();
     }).catch(() => {});
   }

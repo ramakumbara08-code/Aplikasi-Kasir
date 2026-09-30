@@ -1,3 +1,6 @@
+// Spreadsheet handles live only for this execution; no cached user data.
+const REQUEST_IO = { spreadsheet: null, sheets: Object.create(null) };
+
 const SPREADSHEET_ID_PROP = "KASIR_SPREADSHEET_ID";
 const ROOT_FOLDER_ID_PROP = "KASIR_ROOT_FOLDER_ID";
 const INVOICE_FOLDER_ID_PROP = "KASIR_INVOICE_FOLDER_ID";
@@ -253,35 +256,8 @@ function createCompanyFolders() {
 }
 
 function ensureRuntimeForAction_(action) {
+  // Sheets are initialized lazily by the operation that uses them.
   ensureSpreadsheet_();
-  const sheetMap = {
-    ping: [],
-    login: ["tenants", "users", "tokens"],
-    loginOwner: ["tenants", "users", "tokens"],
-    loginCashier: ["tenants", "users", "tokens"],
-    bootstrap: ["tenants", "users", "categories", "products", "customers", "transactions", "expenses", "activityLogs", "settings"],
-    getCompanyConfig: ["tenants", "settings"],
-    getCompanyProfile: ["tenants", "settings"],
-    createCompanyFolders: [],
-    saveTenant: ["tenants"],
-    saveActivityLog: ["activityLogs"],
-    saveTransaction: ["transactions", "products"],
-    markReturn: ["transactions", "products"],
-    createInvoicePdf: ["transactions"],
-    uploadLogo: ["tenants", "settings"],
-    saveUser: ["users"],
-    saveCustomer: ["customers"],
-    saveCategory: ["categories"],
-    saveProduct: ["products"],
-    saveExpense: ["expenses"],
-    deleteUser: ["users"],
-    deleteCustomer: ["customers"],
-    deleteCategory: ["categories"],
-    deleteProduct: ["products"],
-    deleteExpense: ["expenses"]
-  };
-  const collections = Object.prototype.hasOwnProperty.call(sheetMap, action) ? sheetMap[action] : Object.keys(SHEET_HEADERS);
-  collections.forEach((collection) => sheet_(collection));
 }
 
 function doGet(e) {
@@ -312,7 +288,7 @@ function doPost(e) {
     const user = requireAuth_(body.token);
     const tenant = getById_("tenants", user.tenantId || DEFAULT_TENANT_ID);
     assertCompanyLicense_(tenant, contextFromUser_(user), true);
-    if (action === "bootstrap") return json_(bootstrap_(user));
+    if (action === "bootstrap") return json_(bootstrap_(user, body.phase));
     if (action === "getCompanyConfig" || action === "getCompanyProfile") return json_(getCompanyProfile_(user));
     if (action === "createCompanyFolders") return json_({ message: createCompanyFolders() });
 
@@ -412,7 +388,7 @@ function login_(body) {
   };
 }
 
-function bootstrap_(user) {
+function bootstrap_(user, phase) {
   if (user.role === "platform") {
     return {
       user,
@@ -427,6 +403,11 @@ function bootstrap_(user) {
     };
   }
   const tenantId = user.tenantId || DEFAULT_TENANT_ID;
+  if (phase === "history") {
+    requireRole_(user, ["owner"]);
+    return { bootstrapPhase: "history", transactions: readListByTenant_("transactions", tenantId),
+      expenses: readListByTenant_("expenses", tenantId), activityLogs: readListByTenant_("activityLogs", tenantId) };
+  }
   const tenantRows = readList_("tenants").filter((tenant) => tenant.id === tenantId);
   const base = {
     user,
@@ -437,6 +418,10 @@ function bootstrap_(user) {
   };
   if (user.role === "owner") {
     base.users = readListByTenant_("users", tenantId).map(publicUser_);
+    if (phase === "essential") {
+      base.bootstrapPhase = "essential";
+      return base;
+    }
     base.transactions = readListByTenant_("transactions", tenantId);
     base.expenses = readListByTenant_("expenses", tenantId);
     base.activityLogs = readListByTenant_("activityLogs", tenantId);
@@ -820,7 +805,10 @@ function invoiceHtml_(transaction, settings) {
 
 function requireAuth_(token) {
   if (!token) throw new Error("Token kosong");
-  const row = getById_("tokens", token);
+  const tokenSheet = sheet_("tokens");
+  const rowNumber = findRowNumber_(tokenSheet, token);
+  const tokenHeaders = sheetHeaders_(tokenSheet);
+  const row = rowNumber ? rowToObject_(tokenHeaders, tokenSheet.getRange(rowNumber, 1, 1, tokenHeaders.length).getValues()[0]) : null;
   if (!row) throw new Error("Token tidak valid");
   if (new Date(row.expiresAt).getTime() < Date.now()) throw new Error("Token kedaluwarsa");
   return {
@@ -1287,7 +1275,7 @@ function readList_(collection) {
   const sheet = sheet_(collection);
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
-  const headers = sheetHeaders_(sheet);
+  const headers = values[0].map(canonicalHeader_);
   return values.slice(1)
     .filter((row) => row.some((cell) => cell !== ""))
     .map((row) => rowToObject_(headers, row));
@@ -1387,23 +1375,22 @@ function spreadsheetId_() {
 }
 
 function spreadsheet_() {
-  const id = spreadsheetId_();
-  if (!id) return ensureSpreadsheet_();
-  return SpreadsheetApp.openById(id);
+  return ensureSpreadsheet_();
 }
 
 function ensureSpreadsheet_() {
+  if (REQUEST_IO.spreadsheet) return REQUEST_IO.spreadsheet;
   const props = PropertiesService.getScriptProperties();
   const id = props.getProperty(SPREADSHEET_ID_PROP);
-  if (id) return SpreadsheetApp.openById(id);
+  if (id) return (REQUEST_IO.spreadsheet = SpreadsheetApp.openById(id));
   const active = SpreadsheetApp.getActiveSpreadsheet();
   if (active) {
     props.setProperty(SPREADSHEET_ID_PROP, active.getId());
-    return active;
+    return (REQUEST_IO.spreadsheet = active);
   }
   const file = SpreadsheetApp.create("Kasir SaaS - Data Perusahaan");
   props.setProperty(SPREADSHEET_ID_PROP, file.getId());
-  return file;
+  return (REQUEST_IO.spreadsheet = file);
 }
 
 function ensureSheets_() {
@@ -1416,11 +1403,12 @@ function headers_(collection) {
 }
 
 function sheet_(collection, force) {
+  if (!force && REQUEST_IO.sheets[collection]) return REQUEST_IO.sheets[collection];
   const ss = spreadsheet_();
   let sheet = ss.getSheetByName(collection);
   const cache = CacheService.getScriptCache();
   const cacheKey = `${SHEET_SCHEMA_CACHE_PREFIX}${collection}`;
-  if (!force && sheet && cache.get(cacheKey)) return sheet;
+  if (!force && sheet && cache.get(cacheKey)) return (REQUEST_IO.sheets[collection] = sheet);
   if (!sheet) sheet = ss.insertSheet(collection);
   const headers = headers_(collection);
   const current = sheet.getRange(1, 1, 1, Math.max(headers.length, sheet.getLastColumn() || headers.length)).getValues()[0];
@@ -1428,10 +1416,12 @@ function sheet_(collection, force) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers.map(displayHeader_)]);
     sheet.setFrozenRows(1);
     cache.put(cacheKey, "1", Math.max(60, Number(APP.schemaCacheSeconds) || 21600));
-    return sheet;
+    return (REQUEST_IO.sheets[collection] = sheet);
   }
   const normalized = current.map((header) => header ? displayHeader_(canonicalHeader_(header)) : "");
-  sheet.getRange(1, 1, 1, normalized.length).setValues([normalized]);
+  if (normalized.some((label, index) => label !== current[index])) {
+    sheet.getRange(1, 1, 1, normalized.length).setValues([normalized]);
+  }
   const fields = current.map(canonicalHeader_);
   const missing = headers.filter((header) => fields.indexOf(header) === -1);
   if (missing.length) {
@@ -1439,7 +1429,7 @@ function sheet_(collection, force) {
   }
   sheet.setFrozenRows(1);
   cache.put(cacheKey, "1", Math.max(60, Number(APP.schemaCacheSeconds) || 21600));
-  return sheet;
+  return (REQUEST_IO.sheets[collection] = sheet);
 }
 
 function sheetHeaders_(sheet) {
