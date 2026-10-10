@@ -1442,8 +1442,8 @@
     if (!allowed.some((item) => item.id === ui.tab)) ui.tab = allowed[0].id;
     if (location.hash !== `#${ui.tab}`) history.replaceState(null, "", `#${ui.tab}`);
     const scrollY = window.scrollY;
-    const drafts = Array.from(app.querySelectorAll("form")).filter(form => form.id !== "hpp-form").map(form => ({
-      id: form.id,
+    const drafts = Array.from(app.querySelectorAll("form")).filter(form => form.getAttribute("id") !== "hpp-form").map(form => ({
+      id: form.getAttribute("id"),
       recordId: form.elements.id?.value || "",
       fields: Array.from(form.elements).filter(field => field.name && !["hidden", "submit", "button"].includes(field.type)).map(field => ({ name: field.name, value: field.value, checked: field.checked }))
     }));
@@ -3139,7 +3139,7 @@
   }
 
   function syncHppCalculatorTotals(form) {
-    if (!form || form.id !== "hpp-form") return;
+    if (!form || form.getAttribute("id") !== "hpp-form") return;
     let totalCost = 0;
     form.querySelectorAll("[data-hpp-row]").forEach((row) => {
       const unitInput = row.querySelector("[name='hppUnitCost']");
@@ -4483,7 +4483,7 @@
         if (!button.dataset.originalHtml) button.dataset.originalHtml = button.innerHTML;
         button.disabled = true;
         button.classList.add("is-loading");
-        button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span> ${submitLoadingLabel(form.id)}`;
+        button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span> ${submitLoadingLabel(form.getAttribute("id"))}`;
       } else {
         button.disabled = false;
         button.classList.remove("is-loading");
@@ -4497,30 +4497,30 @@
     const form = event.target.closest("form");
     if (!form) return;
     event.preventDefault();
-    if (form.id === "login-form") {
+    if (form.getAttribute("id") === "login-form") {
       await handleLogin(form);
       return;
     }
     if (form.dataset.submitting === "true") return;
     setFormSubmitting(form, true);
     try {
-      if (form.id === "transaction-edit-form") await handleTransactionEdit(form);
-      else if (form.id === "checkout-form") await handleCheckout(form);
-      else if (form.id === "customer-form") await handleCustomer(form);
-      else if (form.id === "customer-edit-form") await handleCustomerEdit(form);
-      else if (form.id === "expense-form") await handleExpense(form);
-      else if (form.id === "expense-edit-form") await handleExpenseEdit(form);
-      else if (form.id === "category-form") await handleCategory(form);
-      else if (form.id === "category-edit-form") await handleCategoryEdit(form);
-      else if (form.id === "product-form") await handleProduct(form);
-      else if (form.id === "product-edit-form") await handleProductEdit(form);
-      else if (form.id === "hpp-form") await handleHppCalculator(form, event.submitter?.dataset.applyHpp === "true");
-      else if (form.id === "user-form") await handleUser(form);
-      else if (form.id === "user-edit-form") await handleUserEdit(form);
-      else if (form.id === "tenant-form") await handleTenant(form);
-      else if (form.id === "tenant-edit-form") await handleTenantEdit(form);
-      else if (form.id === "platform-settings-form") await handlePlatformSettings(form);
-      else if (form.id === "settings-form") await handleSettings(form);
+      if (form.getAttribute("id") === "transaction-edit-form") await handleTransactionEdit(form);
+      else if (form.getAttribute("id") === "checkout-form") await handleCheckout(form);
+      else if (form.getAttribute("id") === "customer-form") await handleCustomer(form);
+      else if (form.getAttribute("id") === "customer-edit-form") await handleCustomerEdit(form);
+      else if (form.getAttribute("id") === "expense-form") await handleExpense(form);
+      else if (form.getAttribute("id") === "expense-edit-form") await handleExpenseEdit(form);
+      else if (form.getAttribute("id") === "category-form") await handleCategory(form);
+      else if (form.getAttribute("id") === "category-edit-form") await handleCategoryEdit(form);
+      else if (form.getAttribute("id") === "product-form") await handleProduct(form);
+      else if (form.getAttribute("id") === "product-edit-form") await handleProductEdit(form);
+      else if (form.getAttribute("id") === "hpp-form") await handleHppCalculator(form, event.submitter?.dataset.applyHpp === "true");
+      else if (form.getAttribute("id") === "user-form") await handleUser(form);
+      else if (form.getAttribute("id") === "user-edit-form") await handleUserEdit(form);
+      else if (form.getAttribute("id") === "tenant-form") await handleTenant(form);
+      else if (form.getAttribute("id") === "tenant-edit-form") await handleTenantEdit(form);
+      else if (form.getAttribute("id") === "platform-settings-form") await handlePlatformSettings(form);
+      else if (form.getAttribute("id") === "settings-form") await handleSettings(form);
     } catch (error) {
       toast(error?.message || "Proses belum berhasil.");
     } finally {
