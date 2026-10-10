@@ -1094,12 +1094,17 @@ th {
 .catalog-workspace > .panel > .table-wrap,
 .catalog-workspace > .panel > .grid { grid-column: 2; max-height: 55vh; overflow: auto; margin-top: 0 !important; }
 .catalog-workspace > .panel > .detail-box { grid-column: 2; }
+.catalog-mobile-tabs { display: none; }
 .transaction-line { padding: 12px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
 @media (max-width: 760px) {
   .catalog-workspace > .panel { display: block; }
   .catalog-workspace > .panel > form { position: static; margin-bottom: 16px; }
   .catalog-workspace > .panel > .table-wrap,
   .catalog-workspace > .panel > .grid { max-height: 35vh; }
+  .catalog-mobile-tabs { display: flex; }
+  .catalog-products.catalog-view-input > .panel > .table-wrap,
+  .catalog-products.catalog-view-input > .panel > .detail-box { display: none; }
+  .catalog-products.catalog-view-list > .panel > #product-form { display: none; }
 }
 
 .invoice-backdrop {

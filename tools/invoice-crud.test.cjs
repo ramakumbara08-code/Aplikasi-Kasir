@@ -81,6 +81,16 @@ async function main() {
   context.ui.tab='products';
   assert.match(context.renderCategories(),/id="product-form"/);
   assert.doesNotMatch(context.renderCategories(),/id="category-form"|id="hpp-form"/);
+  let submitHandler, submitted;
+  Object.assign(context,{app:{addEventListener:(event,handler)=>submitHandler=handler},setFormSubmitting:()=>{},document:{body:{contains:()=>true}}});
+  const submitStart=source.indexOf('  app.addEventListener("submit"');
+  vm.runInContext(source.slice(submitStart,source.indexOf('  app.addEventListener("click"',submitStart)),context);
+  for(const [formId,handler] of [['customer-edit-form','handleCustomerEdit'],['product-edit-form','handleProductEdit'],['expense-edit-form','handleExpenseEdit'],['transaction-edit-form','handleTransactionEdit'],['user-edit-form','handleUserEdit']]) {
+    context[handler]=async()=>{submitted=formId;};
+    const form={id:{value:'record-id'},getAttribute:()=>formId,dataset:{}};
+    await submitHandler({target:{closest:()=>form},preventDefault(){}});
+    assert.equal(submitted,formId,'hidden name=id must not block form dispatch');
+  }
   console.log('CRUD tests passed: contacts, product/cart price, expense totals, failed server edit rollback.');
   console.log('Invoice/transaction tests passed: WA phone/text/PDF fallback, totals, stock delta, retry, tenant isolation, returned transaction rejection.');
 }

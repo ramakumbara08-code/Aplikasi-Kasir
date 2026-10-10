@@ -676,6 +676,7 @@
     logActor: "all",
     invoiceId: "",
     editingTransactionId: "",
+    catalogView: "input",
     navOpen: false,
     loginRole: "owner",
     loginEmail: "",
@@ -2604,7 +2605,7 @@
     if (selectedProduct && selectedProduct.id !== ui.selectedProductId) ui.selectedProductId = selectedProduct.id;
     const productCategoryId = firstTopCategoryId("income") || "cat-sales";
     return `
-      <div class="catalog-workspace">
+      <div class="catalog-workspace ${ui.tab === "products" ? "catalog-products" : ""} catalog-view-${ui.catalogView}">
         ${ui.tab === "categories" ? `
         <section class="panel">
           <div class="panel-header"><h3>Kategori akuntansi</h3></div>
@@ -2664,7 +2665,7 @@
         </section>
         ` : `
         <section class="panel">
-          <div class="panel-header"><h3>Item penjualan</h3></div>
+          <div class="panel-header"><h3>Item penjualan</h3><div class="actions catalog-mobile-tabs"><button type="button" class="${ui.catalogView === "input" ? "btn-primary" : "btn-soft"}" data-catalog-view="input">Input Produk</button><button type="button" class="${ui.catalogView === "list" ? "btn-primary" : "btn-soft"}" data-catalog-view="list">Daftar & Edit</button></div></div>
           <form id="product-form" class="form-grid">
             <label>Nama item <input name="name" required></label>
             <label>SKU <input name="sku" placeholder="Kode item"></label>
@@ -2923,6 +2924,7 @@
   function printInvoice(transactionId) {
     const transaction = tenantTransactions().find(item => item.id === transactionId);
     if (!transaction) return;
+    document.querySelectorAll(".invoice-print-frame").forEach(frame => frame.remove());
     const frame = document.createElement("iframe");
     frame.className = "invoice-print-frame";
     frame.title = "Cetak invoice";
@@ -4546,6 +4548,7 @@
       ui.navOpen = false;
       render();
     }
+    if (target.dataset.catalogView) { ui.catalogView = target.dataset.catalogView; render(); }
     if (target.dataset.logout !== undefined) {
       await logActivity("logout", "Keluar dari aplikasi", state.session?.username || state.session?.email || "");
       state.session = null;
