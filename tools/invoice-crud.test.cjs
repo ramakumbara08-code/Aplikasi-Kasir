@@ -92,6 +92,25 @@ async function main() {
     assert.equal(submitted,formId,'hidden name=id must not block form dispatch');
   }
   console.log('CRUD tests passed: contacts, product/cart price, expense totals, failed server edit rollback.');
+  let renewals=0, requests=0;
+  Object.assign(context, {
+    currentTenant:()=>({}),appSlug:()=> 'Laundry',
+    showSessionRenewal:()=>renewals++,
+    fetchWithTimeout:async()=>{requests++;return {ok:true,json:async()=>({success:false,error:'Token kedaluwarsa'})};},
+    unwrapApiResult:data=>{if(!data.success)throw Error(data.error);return data.data;},
+  });
+  context.state.session={id:'owner',role:'owner',tenantId:'tenant',token:'expired'};
+  vm.runInContext([fn('api'),fn('applyRenewedSession')].join('\n'),context);
+  await assert.rejects(context.api('saveProduct',{product}),/Sesi login berakhir/);
+  assert.equal(renewals,1); assert.equal(requests,1,'must not retry writes before login');
+  await assert.rejects(context.api('loginOwner',{},false),/Token kedaluwarsa/);
+  assert.equal(renewals,1,'failed login must not open recursive renewal dialogs');
+  const prior={...context.state.session};
+  assert.throws(()=>context.applyRenewedSession(prior,{token:'new',user:{id:'other',role:'owner',tenantId:'tenant'}}),/akun dan toko/);
+  assert.equal(context.state.session.token,'expired');
+  context.applyRenewedSession(prior,{token:'new',user:{id:'owner',role:'owner',tenantId:'tenant'}});
+  assert.equal(context.state.session.token,'new');
+  console.log('Session tests passed: expired-token recovery, no automatic write retry, account/tenant checks, successful token replacement.');
   console.log('Invoice/transaction tests passed: WA phone/text/PDF fallback, totals, stock delta, retry, tenant isolation, returned transaction rejection.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
