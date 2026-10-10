@@ -1074,6 +1074,34 @@ th {
   color: #ffffff;
 }
 
+.invoice-print-frame {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 800px;
+  height: 1000px;
+  border: 0;
+}
+
+.catalog-workspace > .panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.5fr);
+  gap: 16px;
+  align-items: start;
+}
+.catalog-workspace > .panel > .panel-header { grid-column: 1 / -1; }
+.catalog-workspace > .panel > form { grid-column: 1; grid-row: 2 / 4; position: sticky; top: 16px; }
+.catalog-workspace > .panel > .table-wrap,
+.catalog-workspace > .panel > .grid { grid-column: 2; max-height: 55vh; overflow: auto; margin-top: 0 !important; }
+.catalog-workspace > .panel > .detail-box { grid-column: 2; }
+.transaction-line { padding: 12px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+@media (max-width: 760px) {
+  .catalog-workspace > .panel { display: block; }
+  .catalog-workspace > .panel > form { position: static; margin-bottom: 16px; }
+  .catalog-workspace > .panel > .table-wrap,
+  .catalog-workspace > .panel > .grid { max-height: 35vh; }
+}
+
 .invoice-backdrop {
   align-items: center;
   background: rgba(16, 24, 32, 0.56);

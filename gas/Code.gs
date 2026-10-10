@@ -266,6 +266,7 @@ function ensureRuntimeForAction_(action) {
     saveTenant: ["tenants"],
     saveActivityLog: ["activityLogs"],
     saveTransaction: ["transactions", "products"],
+    editTransaction: ["transactions", "products"],
     markReturn: ["transactions", "products"],
     createInvoicePdf: ["transactions"],
     uploadLogo: ["tenants", "settings"],
@@ -329,6 +330,11 @@ function doPost(e) {
     if (action === "saveTransaction") {
       requireRole_(user, ["owner", "cashier"]);
       return json_(saveTransaction_(body.transaction));
+    }
+
+    if (action === "editTransaction") {
+      requireRole_(user, ["owner"]);
+      return json_(editTransaction_(body.transaction, user));
     }
 
     if (action === "markReturn") {
@@ -456,6 +462,9 @@ function saveUser_(user) {
     null
   );
   const target = existingById || existingByPrevious;
+  if (user.password && String(user.password).length < 6) throw new Error("Password minimal 6 karakter");
+  const emailOwner = user.email ? findUserByLogin_(lower_(user.email)) : null;
+  if (emailOwner && (!target || String(emailOwner.id) !== String(target.id))) throw new Error("Email sudah dipakai");
   const existingByUsername = findUserByLogin_(username);
   if (existingByUsername) {
     const sameById = target && target.id && existingByUsername.id && String(target.id) === String(existingByUsername.id);
@@ -640,7 +649,7 @@ function saveTransaction_(transaction) {
   ensureDriveFolders_();
   const row = normalizeTransaction_(transaction);
   const existing = getById_("transactions", row.id);
-  if (existing && existing.pdfUrl && !row.pdfUrl) row.pdfUrl = existing.pdfUrl;
+  if (existing && existing.pdfUrl && !row.pdfUrl && existing.paymentStatus === row.paymentStatus && existing.returnStatus === row.returnStatus) row.pdfUrl = existing.pdfUrl;
   put_("transactions", row.id, row);
 
   if (!existing && row.returnStatus !== "returned") {
@@ -648,6 +657,32 @@ function saveTransaction_(transaction) {
   }
 
   return { transactionId: row.id, pdfUrl: row.pdfUrl || "" };
+}
+
+function editTransaction_(transaction, user) {
+  if (!transaction || !transaction.id || !Array.isArray(transaction.items) || !transaction.items.length) throw new Error("Transaksi tidak valid");
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const existing = getById_("transactions", transaction.id);
+    if (!existing || String(existing.tenantId) !== String(user.tenantId || DEFAULT_TENANT_ID)) throw new Error("Transaksi tidak ditemukan");
+    if (existing.returnStatus === "returned") throw new Error("Transaksi return tidak bisa diedit");
+    transaction.items.forEach(function(item) {
+      if (!isFinite(Number(item.qty)) || Number(item.qty) <= 0 || !isFinite(Number(item.price)) || Number(item.price) < 0) throw new Error("Jumlah atau harga item tidak valid");
+    });
+    const row = normalizeTransaction_(Object.assign({}, transaction, { tenantId: existing.tenantId, returnStatus: existing.returnStatus, pdfUrl: "" }));
+    row.subtotal = row.items.reduce(function(total, item) { return total + item.total; }, 0);
+    if (row.discount < 0 || row.discount > row.subtotal) throw new Error("Diskon tidak valid");
+    row.total = row.subtotal - row.discount;
+    row.paymentStatus = transaction.paymentStatus === "pending" ? "pending" : "paid";
+    row.updatedAt = new Date().toISOString();
+    const delta = {};
+    (existing.items || []).forEach(function(item) { delta[item.productId] = (delta[item.productId] || 0) + Number(item.qty); });
+    row.items.forEach(function(item) { delta[item.productId] = (delta[item.productId] || 0) - Number(item.qty); });
+    Object.keys(delta).forEach(function(productId) { if (delta[productId]) adjustStock_([{ productId: productId, qty: Math.abs(delta[productId]) }], delta[productId] > 0 ? 1 : -1); });
+    put_("transactions", row.id, row);
+    return { transactionId: row.id, pdfUrl: "" };
+  } finally { lock.releaseLock(); }
 }
 
 function markReturn_(body) {
