@@ -4331,6 +4331,52 @@
       });
     }
 
+  function showSessionRenewal() {
+    if (!state.session || document.getElementById("session-renewal")) return;
+    const previous = { ...state.session };
+    const overlay = document.createElement("div");
+    overlay.id = "session-renewal";
+    overlay.className = "invoice-backdrop";
+    overlay.style.zIndex = "10000";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Perbarui sesi login");
+    overlay.innerHTML = `<div class="invoice-modal"><h3>Sesi login berakhir</h3><p>Masuk kembali dengan akun yang sama. Isian edit Anda tetap tersedia.</p><form class="form-grid"><label>Akun <input value="${esc(previous.username || previous.email || "")}" readonly autocomplete="username"></label><label>Password <input name="password" type="password" required autocomplete="current-password"></label><p class="full" data-session-message role="status"></p><button type="submit" class="btn-primary">Masuk Kembali</button><button type="button" class="btn-soft" data-session-cancel>Nanti</button></form></div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector("[data-session-cancel]").addEventListener("click", () => overlay.remove());
+    const form = overlay.querySelector("form");
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const button = form.querySelector('[type="submit"]');
+      if (button.disabled) return;
+      button.disabled = true;
+      const message = form.querySelector("[data-session-message]");
+      try {
+        const result = await api(previous.role === "cashier" ? "loginCashier" : "loginOwner", {
+          email: previous.username || previous.email,
+          username: previous.username || previous.email,
+          password: form.elements.password.value,
+          role: previous.role
+        }, false);
+        applyRenewedSession(previous, result);
+        form.reset();
+        overlay.remove();
+        toast("Sesi diperbarui. Tekan Simpan Perubahan kembali.");
+      } catch (error) {
+        message.textContent = error.message || "Login belum berhasil.";
+      } finally { button.disabled = false; }
+    });
+    form.elements.password.focus({ preventScroll: true });
+  }
+
+  function applyRenewedSession(previous, result) {
+    if (!result.token || !result.user || result.user.id !== previous.id || result.user.role !== previous.role || String(result.user.tenantId || "") !== String(previous.tenantId || "") || state.session?.id !== previous.id) {
+      throw new Error("Login harus menggunakan akun dan toko yang sama.");
+    }
+    state.session = { ...state.session, token: result.token };
+    saveState();
+  }
+
   async function api(action, payload = {}, includeToken = true) {
     const company = state.platformSettings?.company || {};
     const tenant = currentTenant();
@@ -4353,7 +4399,15 @@
     }, action.indexOf("login") === 0 ? 20000 : 15000);
     const data = await response.json();
     if (!response.ok) throw new Error("Backend request failed");
-    return unwrapApiResult(data, "Backend request failed");
+    try {
+      return unwrapApiResult(data, "Backend request failed");
+    } catch (error) {
+      if (includeToken && /token (kedaluwarsa|tidak valid|kosong)/i.test(error.message || "")) {
+        showSessionRenewal();
+        throw new Error("Sesi login berakhir. Masuk kembali, lalu simpan ulang perubahan.");
+      }
+      throw error;
+    }
   }
 
   async function loadRemoteData() {
@@ -4765,7 +4819,7 @@
   });
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    navigator.serviceWorker.register("service-worker.js?v=20261010-01").then((registration) => {
+    navigator.serviceWorker.register("service-worker.js?v=20261010-02").then((registration) => {
       registration.update();
     }).catch(() => {});
   }
