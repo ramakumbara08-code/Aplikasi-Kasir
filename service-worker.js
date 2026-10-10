@@ -1,16 +1,16 @@
-const CACHE_NAME = "kasir-saas-v35";
+const CACHE_NAME = "kasir-saas-v36";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
-  "./css/styles.css?v=20260930-02",
-  "./js/config.js?v=20260930-02",
-  "./js/demo.js?v=20260930-02",
-  "./js/app.js?v=20260930-02",
-  "./manifest.webmanifest?v=20260930-02",
-  "./public/icon.svg?v=20260930-02",
-  "./public/icon-192.png?v=20260930-02",
-  "./public/icon-512.png?v=20260930-02",
-  "./public/apple-touch-icon.png?v=20260930-02"
+  "./css/styles.css?v=20261010-01",
+  "./js/config.js?v=20261010-01",
+  "./js/demo.js?v=20261010-01",
+  "./js/app.js?v=20261010-01",
+  "./manifest.webmanifest?v=20261010-01",
+  "./public/icon.svg?v=20261010-01",
+  "./public/icon-192.png?v=20261010-01",
+  "./public/icon-512.png?v=20261010-01",
+  "./public/apple-touch-icon.png?v=20261010-01"
 ];
 
 self.addEventListener("install", (event) => {

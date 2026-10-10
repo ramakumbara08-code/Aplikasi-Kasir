@@ -21,7 +21,9 @@
     { id: "reports", label: "Laporan", icon: "reports", roles: ["owner"], title: "Laporan Akuntansi", subtitle: "Laba rugi, HPP, aset sederhana, dan export untuk kebutuhan usaha." },
     { id: "customers", label: "Kontak", icon: "customers", roles: ["owner"], title: "CRM Pelanggan", subtitle: "Data kontak, alamat, catatan, dan histori belanja per pelanggan." },
     { id: "expenses", label: "Biaya", icon: "expenses", roles: ["owner"], title: "Biaya", subtitle: "Catat biaya tetap dan tidak tetap dengan kategori akuntansi dasar." },
-    { id: "categories", label: "Produk", icon: "products", roles: ["owner"], title: "Produk & Kategori", subtitle: "Atur akun pemasukan, pengeluaran, subkategori, dan produk kasir." },
+    { id: "categories", label: "Kategori", icon: "products", roles: ["owner"], title: "Kategori Produk", subtitle: "Atur akun pemasukan, pengeluaran, subkategori, dan produk kasir." },
+    { id: "products", label: "Item Produk", icon: "products", roles: ["owner"], title: "Item Penjualan", subtitle: "Tambah, edit, dan lihat produk dalam satu halaman." },
+    { id: "hpp", label: "Input HPP", icon: "expenses", roles: ["owner"], title: "Input HPP", subtitle: "Susun biaya produksi dan terapkan HPP ke produk." },
     { id: "invoices", label: "Invoice", icon: "invoices", roles: ["owner"], title: "Invoice", subtitle: "Buka, cetak PDF, dan kirim invoice ke pelanggan via WA." },
     { id: "team", label: "Akun", icon: "team", roles: ["owner"], title: "Akun & Log Aktivitas", subtitle: "Buat akun kasir dan lihat jejak setiap tindakan agar tanggung jawab jelas." },
     { id: "settings", label: "Pengaturan", icon: "settings", roles: ["owner"], title: "Pengaturan", subtitle: "Profil toko dikelola tanpa perlu mengurus GAS atau Spreadsheet." }
@@ -673,6 +675,8 @@
     logSearch: "",
     logActor: "all",
     invoiceId: "",
+    editingTransactionId: "",
+    catalogView: "input",
     navOpen: false,
     loginRole: "owner",
     loginEmail: "",
@@ -1438,7 +1442,24 @@
     const allowed = navItems.filter((item) => item.roles.includes(state.session.role));
     if (!allowed.some((item) => item.id === ui.tab)) ui.tab = allowed[0].id;
     if (location.hash !== `#${ui.tab}`) history.replaceState(null, "", `#${ui.tab}`);
+    const scrollY = window.scrollY;
+    const drafts = Array.from(app.querySelectorAll("form")).filter(form => form.getAttribute("id") !== "hpp-form").map(form => ({
+      id: form.getAttribute("id"),
+      recordId: form.elements.id?.value || "",
+      fields: Array.from(form.elements).filter(field => field.name && !["hidden", "submit", "button"].includes(field.type)).map(field => ({ name: field.name, value: field.value, checked: field.checked }))
+    }));
     renderShell(allowed);
+    drafts.forEach(draft => {
+      const form = document.getElementById(draft.id);
+      if (!form || (form.elements.id?.value || "") !== draft.recordId) return;
+      draft.fields.forEach(saved => {
+        const field = form.elements.namedItem(saved.name);
+        if (!field || !field.tagName) return;
+        if (field.type === "checkbox" || field.type === "radio") field.checked = saved.checked;
+        else if (field.type !== "file") field.value = saved.value;
+      });
+    });
+    window.scrollTo({ top: scrollY, behavior: "instant" });
   }
 
   function inputSnapshot(target = document.activeElement) {
@@ -1676,6 +1697,7 @@
         </main>
       </div>
       ${ui.invoiceId ? renderInvoiceModal(ui.invoiceId) : ""}
+      ${ui.editingTransactionId ? renderTransactionEditModal(ui.editingTransactionId) : ""}
     `;
   }
 
@@ -1687,6 +1709,8 @@
       case "customers": return renderCustomers();
       case "expenses": return renderExpenses();
       case "categories": return renderCategories();
+      case "products": return renderCategories();
+      case "hpp": return renderHppCalculatorPanel();
       case "invoices": return renderInvoices();
       case "team": return renderTeam();
       case "settings": return renderSettings();
@@ -1945,8 +1969,9 @@
                   <option>Shopee</option>
                   <option>TikTok Shop</option>
                 </select>
-                <span class="muted small">Shopee dan TikTok Shop otomatis dicatat sebagai pembayaran tunda.</span>
+                <span class="muted small">Pilih status pembayaran di bawah.</span>
               </label>
+              <label>Status pembayaran <select name="paymentStatus"><option value="auto">Otomatis sesuai metode</option><option value="pending">Belum lunas</option><option value="paid">Lunas</option></select></label>
               ${ui.posCustomerId === "new" ? `
                 <label>Nama pelanggan
                   <input name="newCustomerName" required placeholder="Nama">
@@ -2291,7 +2316,7 @@
         <input type="hidden" name="previousEmail" value="${esc(user.email || "")}">
         <label>Nama <input name="name" value="${esc(user.name)}" required></label>
         <label>Username <input name="username" value="${esc(user.username || "")}" required autocomplete="off"></label>
-        <label>Email <input name="email" value="${esc(user.email || "")}" inputmode="email"></label>
+        <label>Email <input name="email" type="email" value="${esc(user.email || "")}"></label>
         <label>Password baru <input name="password" type="password" autocomplete="new-password" minlength="6" placeholder="Kosongkan jika tidak diganti"></label>
         <label>Role
           <select name="role">
@@ -2580,7 +2605,8 @@
     if (selectedProduct && selectedProduct.id !== ui.selectedProductId) ui.selectedProductId = selectedProduct.id;
     const productCategoryId = firstTopCategoryId("income") || "cat-sales";
     return `
-      <div class="grid two">
+      <div class="catalog-workspace ${ui.tab === "products" ? "catalog-products" : ""} catalog-view-${ui.catalogView}">
+        ${ui.tab === "categories" ? `
         <section class="panel">
           <div class="panel-header"><h3>Kategori akuntansi</h3></div>
           <form id="category-form" class="form-grid">
@@ -2637,8 +2663,9 @@
             ` : `<div class="empty-state">Pilih kategori untuk melihat detail.</div>`}
           </div>
         </section>
+        ` : `
         <section class="panel">
-          <div class="panel-header"><h3>Item penjualan</h3></div>
+          <div class="panel-header"><h3>Item penjualan</h3><div class="actions catalog-mobile-tabs"><button type="button" class="${ui.catalogView === "input" ? "btn-primary" : "btn-soft"}" data-catalog-view="input">Input Produk</button><button type="button" class="${ui.catalogView === "list" ? "btn-primary" : "btn-soft"}" data-catalog-view="list">Daftar & Edit</button></div></div>
           <form id="product-form" class="form-grid">
             <label>Nama item <input name="name" required></label>
             <label>SKU <input name="sku" placeholder="Kode item"></label>
@@ -2656,7 +2683,7 @@
                 ${subcategoryOptions("income", productCategoryId, "")}
               </select>
             </label>
-            <span class="muted small full" data-hpp-preview>Isi manual atau gunakan panel Kalkulator HPP di bawah untuk struktur biaya yang lebih rinci.</span>
+            <span class="muted small full" data-hpp-preview>Isi manual atau gunakan halaman Input HPP untuk struktur biaya yang lebih rinci.</span>
             <button type="submit" class="btn-primary">Tambah Item</button>
           </form>
           <div class="table-wrap" style="margin-top: 16px;">
@@ -2692,8 +2719,9 @@
             ` : `<div class="empty-state">Pilih item untuk melihat detail.</div>`}
           </div>
         </section>
+        `}
       </div>
-      ${renderHppCalculatorPanel()}
+
     `;
   }
 
@@ -2893,6 +2921,94 @@
     `;
   }
 
+  function printInvoice(transactionId) {
+    const transaction = tenantTransactions().find(item => item.id === transactionId);
+    if (!transaction) return;
+    document.querySelectorAll(".invoice-print-frame").forEach(frame => frame.remove());
+    const frame = document.createElement("iframe");
+    frame.className = "invoice-print-frame";
+    frame.title = "Cetak invoice";
+    const stylesheet = new URL("css/styles.css", location.href).href;
+    frame.onload = async () => {
+      const doc = frame.contentDocument;
+      await Promise.all(Array.from(doc.images).map(img => img.complete ? Promise.resolve() : new Promise(resolve => { img.onload = resolve; img.onerror = resolve; })));
+      await doc.fonts?.ready;
+      frame.contentWindow.addEventListener("afterprint", () => frame.remove(), { once: true });
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    };
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(location.href)}"><title>${esc(transaction.id)}</title><link rel="stylesheet" href="${esc(stylesheet)}"></head><body>${renderInvoiceSheet(transaction)}</body></html>`;
+    document.body.appendChild(frame);
+  }
+
+  function renderTransactionEditModal(transactionId) {
+    const tx = tenantTransactions().find(item => item.id === transactionId);
+    if (!tx || tx.returnStatus === "returned" || state.session?.role !== "owner") return "";
+    return `<div class="invoice-backdrop" role="dialog" aria-modal="true" aria-label="Edit transaksi"><div class="invoice-modal">
+      <h3>Edit transaksi ${esc(tx.id)}</h3>
+      <form id="transaction-edit-form" class="form-grid">
+        <input type="hidden" name="id" value="${esc(tx.id)}">
+        <label>Pelanggan <select name="customerId">${tenantCustomers().map(c => `<option value="${esc(c.id)}" ${selectedAttr(c.id, tx.customerId)}>${esc(c.name)}</option>`).join("")}</select></label>
+        <label>Tanggal <input type="date" name="date" value="${toDateInput(new Date(tx.date))}" required></label>
+        <label>Pembayaran <input name="paymentMethod" value="${esc(tx.paymentMethod)}" required></label>
+        <label>Status <select name="paymentStatus"><option value="pending" ${selectedAttr(tx.paymentStatus, "pending")}>Belum lunas</option><option value="paid" ${selectedAttr(tx.paymentStatus, "paid")}>Lunas</option></select></label>
+        <div class="full transaction-lines">${tx.items.map((item, index) => renderTransactionLine(item, index)).join("")}</div>
+        <button type="button" class="btn-soft" data-add-transaction-line>Tambah item</button>
+        <label>Diskon <input name="discount" inputmode="numeric" data-currency value="${formatCurrencyInput(tx.discount || 0)}"></label>
+        <label class="full">Catatan <textarea name="notes">${esc(tx.notes || "")}</textarea></label>
+        <button type="submit" class="btn-primary">Simpan Transaksi</button><button type="button" class="btn-soft" data-close-transaction-edit>Batal</button>
+      </form></div></div>`;
+  }
+
+  function renderTransactionLine(item = {}, index = -1) {
+    const products = tenantProducts();
+    return `<div class="transaction-line form-grid" data-transaction-line data-original-index="${index}">
+      <label>Produk <select name="lineProduct">${!products.some(p => p.id === item.productId) && item.productId ? `<option value="${esc(item.productId)}">${esc(item.name)}</option>` : ""}${products.map(p => `<option value="${esc(p.id)}" ${selectedAttr(p.id, item.productId)}>${esc(p.name)}</option>`).join("")}</select></label>
+      <label>Qty <input name="lineQty" inputmode="decimal" value="${esc(item.qty || 1)}" required></label>
+      <label>Harga <input name="linePrice" inputmode="numeric" data-currency value="${formatCurrencyInput(item.price ?? products[0]?.price ?? 0)}" required></label>
+      <button type="button" class="btn-danger" data-remove-transaction-line>Hapus item</button>
+    </div>`;
+  }
+
+  async function handleTransactionEdit(form) {
+    if (state.session?.role !== "owner") return;
+    const tx = tenantTransactions().find(item => item.id === form.elements.id.value);
+    if (!tx || tx.returnStatus === "returned") return;
+    const customer = customerById(form.elements.customerId.value);
+    const items = Array.from(form.querySelectorAll("[data-transaction-line]")).map(row => {
+      const productId = row.querySelector('[name="lineProduct"]').value;
+      const previous = tx.items[Number(row.dataset.originalIndex)];
+      const product = previous?.productId === productId ? previous : productById(productId);
+      const qty = parseCartQuantity(row.querySelector('[name="lineQty"]').value);
+      const price = parseCurrency(row.querySelector('[name="linePrice"]').value);
+      if (!product || !qty || price < 0) throw new Error("Periksa produk, jumlah, dan harga item.");
+      return { productId, name: product.name, sku: product.sku || "", categoryId: product.categoryId, subcategoryId: product.subcategoryId || "", qty, price, cost: Number(product.cost) || 0, total: Math.round(qty * price) };
+    });
+    if (!customer || !items.length) throw new Error("Pelanggan dan minimal satu item wajib diisi.");
+    const subtotal = sum(items, "total");
+    const discount = parseCurrency(form.elements.discount.value);
+    if (discount < 0 || discount > subtotal) throw new Error("Diskon harus antara nol dan subtotal.");
+    const updated = { ...tx, items, subtotal, discount, total: subtotal - discount, date: new Date(form.elements.date.value + "T12:00:00").toISOString(), customerId: customer.id, customerSnapshot: { name: customer.name, phone: customer.phone, address: customer.address }, paymentMethod: form.elements.paymentMethod.value.trim(), paymentStatus: form.elements.paymentStatus.value, notes: form.elements.notes.value.trim(), updatedAt: nowIso(), pdfUrl: "", synced: false };
+    if (backendUrl() && state.session?.token) {
+      await api("editTransaction", { transaction: updated });
+      updated.synced = true;
+    }
+    const adjustments = new Map();
+    tx.items.forEach(item => adjustments.set(item.productId, (adjustments.get(item.productId) || 0) + Number(item.qty)));
+    items.forEach(item => adjustments.set(item.productId, (adjustments.get(item.productId) || 0) - Number(item.qty)));
+    adjustments.forEach((delta, productId) => {
+      const product = productById(productId);
+      if (product) product.stock = Math.max(0, Math.round(((Number(product.stock) || 0) + delta) * 1000) / 1000);
+    });
+    Object.assign(tx, updated);
+    ui.editingTransactionId = "";
+    ui.invoiceId = tx.id;
+    saveState();
+    render();
+    await logActivity("update_transaction", "Transaksi dan stok diperbarui", tx.id);
+    toast("Transaksi diperbarui. PDF akan dibuat ulang saat dikirim.");
+  }
+
   function renderInvoiceModal(transactionId) {
     const transaction = tenantTransactions().find((item) => item.id === transactionId);
     if (!transaction) return "";
@@ -3025,7 +3141,7 @@
   }
 
   function syncHppCalculatorTotals(form) {
-    if (!form || form.id !== "hpp-form") return;
+    if (!form || form.getAttribute("id") !== "hpp-form") return;
     let totalCost = 0;
     form.querySelectorAll("[data-hpp-row]").forEach((row) => {
       const unitInput = row.querySelector("[name='hppUnitCost']");
@@ -3138,10 +3254,10 @@
   }
 
   function invoiceWaButton(transaction) {
-    const phone = transaction.customerSnapshot?.phone || customerById(transaction.customerId)?.phone || "";
+    const phone = customerById(transaction.customerId)?.phone || transaction.customerSnapshot?.phone || "";
     if (!normalizeWa(phone)) return `<button type="button" class="btn-soft" disabled>WA kosong</button>`;
     const loading = ui.invoiceWaLoadingId === transaction.id;
-    return `<button type="button" class="btn-wa ${loading ? "is-loading" : ""}" data-send-invoice-wa="${esc(transaction.id)}" ${loading ? "disabled" : ""}>${loading ? "Menyiapkan..." : transaction.pdfUrl ? "Kirim PDF WA" : "Buat & Kirim WA"}</button>`;
+    return `<a class="button btn-wa" target="_blank" rel="noopener" href="${esc(waLink(phone, ""))}">Chat WA</a><button type="button" class="btn-wa ${loading ? "is-loading" : ""}" data-send-invoice-wa="${esc(transaction.id)}" ${loading ? "disabled" : ""}>${loading ? "Menyiapkan..." : transaction.pdfUrl ? "Kirim PDF WA" : "Buat & Kirim WA"}</button>`;
   }
 
   function transactionActionButtons(transaction) {
@@ -3151,18 +3267,19 @@
     const settleButton = transaction.paymentStatus === "pending"
       ? `<button type="button" class="btn-primary" data-settle-transaction="${esc(transaction.id)}">Lunas</button>`
       : "";
-    return `${settleButton}<button type="button" class="btn-danger" data-return-transaction="${esc(transaction.id)}">Return</button>`;
+    return `${state.session?.role === "owner" ? `<button type="button" class="btn-soft" data-edit-transaction="${esc(transaction.id)}">Edit Transaksi</button>` : ""}${settleButton}<button type="button" class="btn-danger" data-return-transaction="${esc(transaction.id)}">Return</button>`;
   }
 
   function invoiceMessage(transaction) {
-    const pdfLine = transaction.pdfUrl ? `\nPDF invoice: ${transaction.pdfUrl}` : "";
-    return `Halo ${transaction.customerSnapshot?.name || "Pelanggan"}, berikut invoice ${transaction.id} dari ${storeProfile(transaction.tenantId || currentTenantId()).storeName} dengan total ${money(transaction.total)}.${pdfLine}\nTerima kasih.`;
+    const customer = customerById(transaction.customerId) || transaction.customerSnapshot || {};
+    const lines = (transaction.items || []).map(item => item.name + " — " + item.qty + " x " + money(item.price) + " = " + money(item.total)).join("\n");
+    return "Halo " + (customer.name || "Pelanggan") + ", berikut invoice " + transaction.id + " dari " + storeProfile(transaction.tenantId || currentTenantId()).storeName + "\n" + lines + "\nDiskon: " + money(transaction.discount || 0) + "\nTotal: " + money(transaction.total) + "\nStatus: " + (transaction.paymentStatus === "paid" ? "Lunas" : "Belum lunas") + (transaction.pdfUrl ? "\nPDF invoice: " + transaction.pdfUrl : "") + "\nTerima kasih.";
   }
 
   async function sendInvoiceWa(transactionId) {
     const transaction = tenantTransactions().find((item) => item.id === transactionId);
     if (!transaction) return;
-    const phone = transaction.customerSnapshot?.phone || customerById(transaction.customerId)?.phone || "";
+    const phone = customerById(transaction.customerId)?.phone || transaction.customerSnapshot?.phone || "";
     if (!normalizeWa(phone)) {
       toast("Nomor WA pelanggan kosong.");
       return;
@@ -3171,15 +3288,15 @@
     ui.invoiceWaLoadingId = transactionId;
     render();
     try {
-      if (!transaction.pdfUrl) {
+      if (!transaction.pdfUrl && backendUrl()) {
         toast("Membuat PDF invoice...");
         const pdfUrl = await ensureGasPdf(transaction, { silent: true, deferRender: true });
-        if (!pdfUrl) throw new Error("PDF invoice belum tersedia");
+        if (!pdfUrl) toast("PDF belum tersedia. Invoice dikirim sebagai rincian teks.");
       }
       const href = waLink(phone, invoiceMessage(transaction));
       if (popup) popup.location.href = href;
-      else window.open(href, "_blank", "noopener");
-      toast("WhatsApp dibuka dengan link PDF invoice.");
+      else window.location.href = href;
+      toast(transaction.pdfUrl ? "WhatsApp dibuka dengan link PDF invoice. Tekan Kirim di WhatsApp." : "WhatsApp dibuka dengan rincian invoice. Tekan Kirim di WhatsApp.");
     } catch (error) {
       if (popup) popup.close();
       toast(error.message || "PDF invoice belum berhasil dibuat.");
@@ -3385,7 +3502,7 @@
       customerSnapshot: { name: customer.name, phone: customer.phone, address: customer.address },
       cashierName: state.session.name,
       paymentMethod: data.paymentMethod,
-      paymentStatus: isDeferredPayment(data.paymentMethod) ? "pending" : "paid",
+      paymentStatus: data.paymentStatus === "pending" ? "pending" : data.paymentStatus === "paid" ? "paid" : isDeferredPayment(data.paymentMethod) ? "pending" : "paid",
       returnStatus: "none",
       returnedAt: "",
       returnNote: "",
@@ -3423,7 +3540,7 @@
       saveState();
       render();
     }
-    const phone = transaction.customerSnapshot?.phone || customerById(transaction.customerId)?.phone || "";
+    const phone = customerById(transaction.customerId)?.phone || transaction.customerSnapshot?.phone || "";
     if (normalizeWa(phone) && !transaction.pdfUrl && backendUrl()) {
       ensureGasPdf(transaction, { silent: true, deferRender: true })
         .then((pdfUrl) => {
@@ -3467,18 +3584,20 @@
     const data = Object.fromEntries(new FormData(form).entries());
     const customer = customerById(data.id);
     if (!customer) return;
-    Object.assign(customer, {
+    const updated = {
       name: data.name.trim(),
       phone: data.phone.trim(),
       address: data.address.trim(),
       notes: data.notes.trim(),
       updatedAt: nowIso()
-    });
+    };
+    if (backendUrl() && state.session?.token) await api("saveCustomer", { customer: { ...customer, ...updated } });
+    Object.assign(customer, updated);
     if (ui.posCustomerId === customer.id) ui.posCustomerQuery = customer.name;
     clearEditMode("customer");
     saveState();
     render();
-    await pushToGas("saveCustomer", { customer });
+    toast("Perubahan berhasil disimpan.");
     await logActivity("update_customer", `Pelanggan ${customer.name} diperbarui`, customer.phone || customer.id);
   }
 
@@ -3516,7 +3635,7 @@
     const categoryId = topCategoryId(data.categoryId, "expense");
     const subcategoryId = normalizedSubcategoryId(categoryId, data.subcategoryId, "expense");
     const category = categoryById(subcategoryId || categoryId);
-    Object.assign(expense, {
+    const updated = {
       date: new Date(data.date).toISOString(),
       name: data.name.trim(),
       flow: "expense",
@@ -3528,11 +3647,13 @@
       amount: expenseAmount(parseCurrency(data.unitPrice || data.amount), numericValue(data.qty, 1)),
       notes: data.notes.trim(),
       updatedAt: nowIso()
-    });
+    };
+    if (backendUrl() && state.session?.token) await api("saveExpense", { expense: { ...expense, ...updated } });
+    Object.assign(expense, updated);
     clearEditMode("expense");
     saveState();
     render();
-    await pushToGas("saveExpense", { expense });
+    toast("Perubahan berhasil disimpan.");
     await logActivity("update_expense", `${expense.name} diperbarui menjadi ${money(expense.amount)}`, categoryLabel(expense.subcategoryId || expense.categoryId));
   }
 
@@ -3646,7 +3767,7 @@
     const product = productById(data.id);
     if (!product) return;
     const categoryId = topCategoryId(data.categoryId, "income");
-    Object.assign(product, {
+    const updated = {
       sku: data.sku.trim(),
       name: data.name.trim(),
       categoryId,
@@ -3656,7 +3777,9 @@
       stock: Number(data.stock) || 0,
       active: data.active !== "false",
       updatedAt: nowIso()
-    });
+    };
+    if (backendUrl() && state.session?.token) await api("saveProduct", { product: { ...product, ...updated } });
+    Object.assign(product, updated);
     ui.cart
       .filter((line) => line.productId === product.id)
       .forEach((line) => {
@@ -3670,7 +3793,7 @@
     clearEditMode("product");
     saveState();
     render();
-    await pushToGas("saveProduct", { product });
+    toast("Perubahan berhasil disimpan.");
     await logActivity("update_product", `Item ${product.name} diperbarui`, product.sku || product.id);
   }
 
@@ -3748,16 +3871,20 @@
       previousUsername,
       previousEmail
     };
-    Object.assign(user, normalizeUser({
+    const updatedUser = normalizeUser({
       ...user,
       name: data.name.trim(),
       username,
       email,
       role: user.id === state.session.id ? user.role : data.role === "owner" ? "owner" : "cashier",
-      active: data.active !== "false",
+      active: user.id === state.session.id || user.role === "owner" ? user.active : data.active !== "false",
       password: data.password ? data.password : user.password,
       updatedAt: nowIso()
-    }));
+    });
+    if (backendUrl() && state.session?.token) {
+      await api("saveUser", { user: { ...updatedUser, ...userPayloadMeta } });
+    }
+    Object.assign(user, updatedUser);
     if (state.session?.id === user.id) {
       Object.assign(state.session, {
         name: user.name,
@@ -3769,12 +3896,11 @@
     }
     ui.selectedUserId = user.id;
     saveState();
-    await pushToGas("saveUser", { user: { ...user, ...userPayloadMeta } });
     await logActivity("update_user", `Akun ${user.name} diperbarui`, user.username || user.email);
     clearEditMode("user");
     saveState();
     render();
-    toast("Data karyawan berhasil diperbarui.");
+    toast("Email dan data akun berhasil diperbarui.");
   }
 
   async function handleTenant(form) {
@@ -4158,6 +4284,7 @@
   async function createGasPdf(transactionId) {
     const transaction = tenantTransactions().find((item) => item.id === transactionId);
     if (!transaction) return;
+    if (!backendUrl()) { printInvoice(transactionId); return; }
     const pdfUrl = await ensureGasPdf(transaction);
     if (pdfUrl) render();
   }
@@ -4302,6 +4429,7 @@
     const transaction = tenantTransactions().find((item) => item.id === transactionId);
     if (!transaction || transaction.returnStatus === "returned") return;
     transaction.paymentStatus = "paid";
+    transaction.pdfUrl = "";
     transaction.settledAt = nowIso();
     saveState();
     toast("Pembayaran tunda ditandai lunas.");
@@ -4357,7 +4485,7 @@
         if (!button.dataset.originalHtml) button.dataset.originalHtml = button.innerHTML;
         button.disabled = true;
         button.classList.add("is-loading");
-        button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span> ${submitLoadingLabel(form.id)}`;
+        button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span> ${submitLoadingLabel(form.getAttribute("id"))}`;
       } else {
         button.disabled = false;
         button.classList.remove("is-loading");
@@ -4371,29 +4499,30 @@
     const form = event.target.closest("form");
     if (!form) return;
     event.preventDefault();
-    if (form.id === "login-form") {
+    if (form.getAttribute("id") === "login-form") {
       await handleLogin(form);
       return;
     }
     if (form.dataset.submitting === "true") return;
     setFormSubmitting(form, true);
     try {
-      if (form.id === "checkout-form") await handleCheckout(form);
-      else if (form.id === "customer-form") await handleCustomer(form);
-      else if (form.id === "customer-edit-form") await handleCustomerEdit(form);
-      else if (form.id === "expense-form") await handleExpense(form);
-      else if (form.id === "expense-edit-form") await handleExpenseEdit(form);
-      else if (form.id === "category-form") await handleCategory(form);
-      else if (form.id === "category-edit-form") await handleCategoryEdit(form);
-      else if (form.id === "product-form") await handleProduct(form);
-      else if (form.id === "product-edit-form") await handleProductEdit(form);
-      else if (form.id === "hpp-form") await handleHppCalculator(form, event.submitter?.dataset.applyHpp === "true");
-      else if (form.id === "user-form") await handleUser(form);
-      else if (form.id === "user-edit-form") await handleUserEdit(form);
-      else if (form.id === "tenant-form") await handleTenant(form);
-      else if (form.id === "tenant-edit-form") await handleTenantEdit(form);
-      else if (form.id === "platform-settings-form") await handlePlatformSettings(form);
-      else if (form.id === "settings-form") await handleSettings(form);
+      if (form.getAttribute("id") === "transaction-edit-form") await handleTransactionEdit(form);
+      else if (form.getAttribute("id") === "checkout-form") await handleCheckout(form);
+      else if (form.getAttribute("id") === "customer-form") await handleCustomer(form);
+      else if (form.getAttribute("id") === "customer-edit-form") await handleCustomerEdit(form);
+      else if (form.getAttribute("id") === "expense-form") await handleExpense(form);
+      else if (form.getAttribute("id") === "expense-edit-form") await handleExpenseEdit(form);
+      else if (form.getAttribute("id") === "category-form") await handleCategory(form);
+      else if (form.getAttribute("id") === "category-edit-form") await handleCategoryEdit(form);
+      else if (form.getAttribute("id") === "product-form") await handleProduct(form);
+      else if (form.getAttribute("id") === "product-edit-form") await handleProductEdit(form);
+      else if (form.getAttribute("id") === "hpp-form") await handleHppCalculator(form, event.submitter?.dataset.applyHpp === "true");
+      else if (form.getAttribute("id") === "user-form") await handleUser(form);
+      else if (form.getAttribute("id") === "user-edit-form") await handleUserEdit(form);
+      else if (form.getAttribute("id") === "tenant-form") await handleTenant(form);
+      else if (form.getAttribute("id") === "tenant-edit-form") await handleTenantEdit(form);
+      else if (form.getAttribute("id") === "platform-settings-form") await handlePlatformSettings(form);
+      else if (form.getAttribute("id") === "settings-form") await handleSettings(form);
     } catch (error) {
       toast(error?.message || "Proses belum berhasil.");
     } finally {
@@ -4419,6 +4548,7 @@
       ui.navOpen = false;
       render();
     }
+    if (target.dataset.catalogView) { ui.catalogView = target.dataset.catalogView; render(); }
     if (target.dataset.logout !== undefined) {
       await logActivity("logout", "Keluar dari aplikasi", state.session?.username || state.session?.email || "");
       state.session = null;
@@ -4482,19 +4612,27 @@
       ui.invoiceId = "";
       render();
     }
-    if (target.dataset.printInvoice !== undefined) window.print();
+    if (target.dataset.printInvoice !== undefined) printInvoice(ui.invoiceId);
+    if (target.dataset.addTransactionLine !== undefined) { target.form.querySelector(".transaction-lines").insertAdjacentHTML("beforeend", renderTransactionLine()); return; }
+    if (target.dataset.removeTransactionLine !== undefined) { target.closest("[data-transaction-line]").remove(); return; }
+    if (target.dataset.editTransaction && state.session?.role === "owner") { ui.editingTransactionId = target.dataset.editTransaction; ui.invoiceId = ""; render(); }
+    if (target.dataset.closeTransactionEdit !== undefined) { ui.editingTransactionId = ""; render(); }
     if (target.dataset.createPdf) await createGasPdf(target.dataset.createPdf);
     if (target.dataset.sendInvoiceWa) await sendInvoiceWa(target.dataset.sendInvoiceWa);
     if (target.dataset.editCustomer) {
       clearEditMode();
+      ui.selectedCustomerId = target.dataset.editCustomer;
       ui.editingCustomerId = target.dataset.editCustomer;
       render();
+      app.querySelector("#customer-edit-form")?.scrollIntoView({ block: "center" });
     }
     if (target.dataset.deleteCustomer) await deleteCustomer(target.dataset.deleteCustomer);
     if (target.dataset.editExpense) {
       clearEditMode();
+      ui.selectedExpenseId = target.dataset.editExpense;
       ui.editingExpenseId = target.dataset.editExpense;
       render();
+      app.querySelector("#expense-edit-form")?.scrollIntoView({ block: "center" });
     }
     if (target.dataset.deleteExpense) await deleteExpense(target.dataset.deleteExpense);
     if (target.dataset.editCategory) {
@@ -4505,8 +4643,10 @@
     if (target.dataset.deleteCategory) await deleteCategory(target.dataset.deleteCategory);
     if (target.dataset.editProduct) {
       clearEditMode();
+      ui.selectedProductId = target.dataset.editProduct;
       ui.editingProductId = target.dataset.editProduct;
       render();
+      app.querySelector("#product-edit-form")?.scrollIntoView({ block: "center" });
     }
     if (target.dataset.deleteProduct) await deleteProduct(target.dataset.deleteProduct);
     if (target.dataset.addHppDomRow !== undefined) {
@@ -4538,8 +4678,10 @@
     if (target.dataset.settleTransaction) await settleTransaction(target.dataset.settleTransaction);
     if (target.dataset.editUser) {
       clearEditMode();
+      ui.selectedUserId = target.dataset.editUser;
       ui.editingUserId = target.dataset.editUser;
       render();
+      app.querySelector("#user-edit-form")?.scrollIntoView({ block: "center" });
     }
     if (target.dataset.editTenant) {
       clearEditMode();
@@ -4623,7 +4765,7 @@
   });
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
-    navigator.serviceWorker.register("service-worker.js?v=20260930-02").then((registration) => {
+    navigator.serviceWorker.register("service-worker.js?v=20261010-01").then((registration) => {
       registration.update();
     }).catch(() => {});
   }
